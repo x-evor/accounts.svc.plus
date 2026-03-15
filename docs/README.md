@@ -1,26 +1,42 @@
-# XControl Account Service 文档
+# Accounts Service Plus / 账号与身份服务
 
-本文档集覆盖 `accounts.svc.plus` 账号服务的安装、配置、使用、架构、运维与贡献指南。内容基于当前代码与配置模板整理，便于在不同环境快速落地。
+This `docs/` directory now has a bilingual canonical layer for the current repository state.
 
-## 快速入口
+本 `docs/` 目录现已补齐双语规范层，用于承接当前仓库状态下的核心文档。
 
-- 新手：`getting-started/introduction.md`、`getting-started/quickstart.md`
-- 架构：`architecture/overview.md`、`architecture/components.md`
-- 配置与使用：`usage/config.md`、`usage/deployment.md`、`usage/examples.md`
-- API：`api/overview.md`、`api/endpoints.md`、`api/errors.md`
-- 运维：`operations/monitoring.md`、`operations/troubleshooting.md`
+## Quick Entry / 快速入口
 
-## 文档结构
+- Coverage checklist / 覆盖检查矩阵: `docs/DOC_COVERAGE.md`
+- English index / 英文入口: `docs/en/README.md`
+- 中文入口 / Chinese index: `docs/zh/README.md`
 
-- `getting-started/`：10 分钟跑起来
-- `architecture/`：Why > How 的架构说明
-- `usage/`：如何配置与使用
-- `api/`：接口说明与错误约定
-- `integrations/`：数据库、云、邮件与第三方对接
-- `advanced/`：性能、安全、扩展
-- `development/`：开发与贡献
-- `operations/`：监控、日志、备份与排障
-- `governance/`：许可证与发布流程
-- `appendix/`：FAQ、术语表与参考资料
+## Canonical Bilingual Pages / 双语规范页
 
-> 备注：仓库内已有 `docs/SMTP_GMAIL_SETUP.md`（Cloud Run + Gmail SMTP），在 `integrations/cloud.md` 中有交叉引用。
+- `docs/en/architecture.md` / `docs/zh/architecture.md`
+- `docs/en/design.md` / `docs/zh/design.md`
+- `docs/en/deployment.md` / `docs/zh/deployment.md`
+- `docs/en/user-guide.md` / `docs/zh/user-guide.md`
+- `docs/en/developer-guide.md` / `docs/zh/developer-guide.md`
+- `docs/en/vibe-coding-reference.md` / `docs/zh/vibe-coding-reference.md`
+
+## Current Repo Context / 当前仓库背景
+
+- Root README: `accounts.svc.plus`
+- Previous docs index: `XControl Account Service 文档`
+- Manifest evidence / 构建清单: go.mod (`account`)
+- Active code and ops directories / 当前主要目录: `cmd/`, `internal/`, `api/`, `accountsvc/`, `deploy/`, `ansible/`, `scripts/`, `tests/`, `sql/`, `config/`
+
+## Existing Docs To Reconcile / 需要继续归并的现有文档
+
+- `Runbook/Feature-Sandbox-Mode-and-Sync-Fix.md`
+- `Runbook/Fix-Agent-404-And-UUID-Change.md`
+- `Runbook/Fix-CloudRun-Stunnel-Startup-Failure.md`
+- `Runbook/Fix-Rotating-UUID-Sync-Archive-2026-02-06.md`
+- `Runbook/README.md`
+- `Runbook/Security-Scrubbing-Archive-2026-02-06.md`
+- `SMTP_GMAIL_SETUP.md`
+- `advanced/customization.md`
+- `advanced/performance.md`
+- `advanced/scalability.md`
+- `advanced/security.md`
+- `api/auth.md`
