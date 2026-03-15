@@ -113,6 +113,17 @@ func extractVerificationCodeFromMessage(t *testing.T, msg capturedEmail) string 
 	return ""
 }
 
+func TestWithAgentRegistry_IgnoresTypedNil(t *testing.T) {
+	var registry *agentserver.Registry
+	h := &handler{}
+
+	WithAgentRegistry(registry)(h)
+
+	if h.agentRegistry != nil {
+		t.Fatalf("expected nil agent registry, got %T", h.agentRegistry)
+	}
+}
+
 func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) apiResponse {
 	t.Helper()
 	var resp apiResponse

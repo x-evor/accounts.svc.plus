@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -220,7 +221,23 @@ func WithOAuthFrontendURL(url string) Option {
 // WithAgentRegistry configures the handler with the provided agent registry.
 func WithAgentRegistry(registry agentRegistry) Option {
 	return func(h *handler) {
+		if isNilAgentRegistry(registry) {
+			return
+		}
 		h.agentRegistry = registry
+	}
+}
+
+func isNilAgentRegistry(registry agentRegistry) bool {
+	if registry == nil {
+		return true
+	}
+	value := reflect.ValueOf(registry)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	default:
+		return false
 	}
 }
 

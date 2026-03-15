@@ -841,10 +841,12 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 	options = append(options, api.WithGormDB(gormDB))
 
 	// Pre-load sandbox bindings from database into the registry
-	var sandboxBindings []model.SandboxBinding
-	if err := gormDB.Find(&sandboxBindings).Error; err == nil {
-		for _, b := range sandboxBindings {
-			agentRegistry.SetSandboxAgent(b.AgentID, true)
+	if agentRegistry != nil {
+		var sandboxBindings []model.SandboxBinding
+		if err := gormDB.Find(&sandboxBindings).Error; err == nil {
+			for _, b := range sandboxBindings {
+				agentRegistry.SetSandboxAgent(b.AgentID, true)
+			}
 		}
 	}
 
