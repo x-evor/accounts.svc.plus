@@ -2,6 +2,22 @@
 
 本项目支持本地编译运行、Docker 容器运行，以及 Cloud Run 部署。以下步骤基于仓库现有脚本与配置。
 
+一键初始化脚本支持按部署模式选择：
+
+```bash
+# 进程部署模式
+curl -fsSL "https://raw.githubusercontent.com/cloud-neutral-toolkit/accounts.svc.plus/main/scripts/setup.sh?$(date +%s)" \
+  | bash -s -- accounts.svc.plus --mode process
+
+# Docker 部署模式
+curl -fsSL "https://raw.githubusercontent.com/cloud-neutral-toolkit/accounts.svc.plus/main/scripts/setup.sh?$(date +%s)" \
+  | bash -s -- accounts.svc.plus --mode docker
+
+# Cloud Run 部署模式
+curl -fsSL "https://raw.githubusercontent.com/cloud-neutral-toolkit/accounts.svc.plus/main/scripts/setup.sh?$(date +%s)" \
+  | bash -s -- accounts.svc.plus --mode cloudrun
+```
+
 ## 本地安装（Go）
 
 前置条件：
@@ -41,7 +57,8 @@ docker run --rm -p 8080:8080 \
 ## Cloud Run
 
 参考文件：
-- `deploy/gcp/cloud-run/service.yaml`
+- `deploy/gcp/cloud-run/prod-service.yaml`
+- `deploy/gcp/cloud-run/preview-service.yaml`
 - `deploy/gcp/cloud-run/stunnel.conf`
 - `config/account.cloudrun.yaml`
 

@@ -21,8 +21,24 @@ Cloud Neutral Toolkit 的账号与身份服务 (Account Service).
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/cloud-neutral-toolkit/accounts.svc.plus/main/scripts/setup.sh?$(date +%s)" \
-  | bash -s -- accounts.svc.plus
+  | bash -s -- accounts.svc.plus --mode process --deploy
 ```
+
+Docker 部署模式：
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/cloud-neutral-toolkit/accounts.svc.plus/main/scripts/setup.sh?$(date +%s)" \
+  | bash -s -- accounts.svc.plus --mode docker --deploy
+```
+
+Cloud Run 部署模式：
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/cloud-neutral-toolkit/accounts.svc.plus/main/scripts/setup.sh?$(date +%s)" \
+  | bash -s -- accounts.svc.plus --mode cloudrun
+```
+
+单机 `process` / `docker` 模式默认会写入 Caddy 站点配置到 `/etc/caddy/conf.d/accounts.svc.plus.conf`，并反向代理到本机 `127.0.0.1:8080`。
 
 ### 本地运行 (Local Dev)
 
@@ -54,4 +70,3 @@ make dev
 - API 参考：`docs/api/overview.md`
 - 运维：`docs/operations/monitoring.md`, `docs/operations/troubleshooting.md`
 - Runbooks：`docs/Runbook/README.md`
-
