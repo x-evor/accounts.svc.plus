@@ -1,0 +1,7 @@
+- name: Load accounts compose defaults
+  ansible.builtin.include_vars:
+    file: "{{ role_path }}/defaults/main.yml"
+
+- name: Delegate accounts deployment to the shared compose role
+  ansible.builtin.include_role:
+    name: shared_compose_service_deploy

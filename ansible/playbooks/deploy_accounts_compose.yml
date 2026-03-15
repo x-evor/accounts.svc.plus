@@ -1,0 +1,7 @@
+- name: Deploy accounts.svc.plus to the single-node Docker Compose host
+  hosts: server
+  become: yes
+  gather_facts: yes
+  roles:
+    - role: accounts_compose_deploy
+

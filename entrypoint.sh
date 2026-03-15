@@ -1,6 +1,70 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# -----------------------------------------------------------------------------
+# Database tunnel bootstrap
+# -----------------------------------------------------------------------------
+
+USE_STUNNEL=0
+STUNNEL_CONF="/etc/stunnel/stunnel.conf"
+
+if [ -z "${DB_USER:-}" ] && [ -n "${POSTGRES_USER:-}" ]; then
+  export DB_USER="${POSTGRES_USER}"
+fi
+
+if [ -z "${DB_PASSWORD:-}" ] && [ -n "${POSTGRES_PASSWORD:-}" ]; then
+  export DB_PASSWORD="${POSTGRES_PASSWORD}"
+fi
+
+if [ -z "${POSTGRES_USER:-}" ] && [ -n "${DB_USER:-}" ]; then
+  export POSTGRES_USER="${DB_USER}"
+fi
+
+if [ -z "${POSTGRES_PASSWORD:-}" ] && [ -n "${DB_PASSWORD:-}" ]; then
+  export POSTGRES_PASSWORD="${DB_PASSWORD}"
+fi
+
+if [ -z "${DB_NAME:-}" ] && [ -n "${POSTGRES_DB:-}" ]; then
+  export DB_NAME="${POSTGRES_DB}"
+fi
+
+if [ -n "${DB_TLS_HOST:-}" ] && [ -n "${DB_TLS_PORT:-}" ]; then
+  USE_STUNNEL=1
+  export DB_HOST="${DB_HOST:-127.0.0.1}"
+  export DB_PORT="${DB_PORT:-15432}"
+
+  mkdir -p /etc/stunnel /var/run/stunnel
+
+  if [ -n "${DB_CA:-}" ]; then
+    printf '%s\n' "${DB_CA}" > /etc/stunnel/ca.pem
+  fi
+
+  cat > "${STUNNEL_CONF}" <<EOF
+foreground = no
+pid = /tmp/stunnel.pid
+socket = l:TCP_NODELAY=1
+socket = r:TCP_NODELAY=1
+
+[postgres-client]
+client = yes
+accept = ${DB_HOST}:${DB_PORT}
+connect = ${DB_TLS_HOST}:${DB_TLS_PORT}
+verify = 2
+EOF
+
+  if [ -f "/etc/stunnel/ca.pem" ]; then
+    echo "CAfile = /etc/stunnel/ca.pem" >> "${STUNNEL_CONF}"
+  elif [ -f "/etc/ssl/certs/ca-certificates.crt" ]; then
+    echo "CAfile = /etc/ssl/certs/ca-certificates.crt" >> "${STUNNEL_CONF}"
+  fi
+
+  if [ -n "${DB_TLS_SERVER_NAME:-}" ]; then
+    echo "checkHost = ${DB_TLS_SERVER_NAME}" >> "${STUNNEL_CONF}"
+  elif [ -n "${DB_TLS_HOST:-}" ]; then
+    echo "checkHost = ${DB_TLS_HOST}" >> "${STUNNEL_CONF}"
+  fi
+fi
+
 CONFIG_FILE="${CONFIG_PATH:-/etc/xcontrol/account.yaml}"
 CONFIG_TEMPLATE="${CONFIG_TEMPLATE:-/app/config/account.yaml}"
 mkdir -p "$(dirname "${CONFIG_FILE}")"
@@ -31,9 +95,17 @@ if [ -n "${PORT:-}" ]; then
   CONFIG_FILE="${tmp_cfg}"
 fi
 
-# Default to 127.0.0.1:15432 if not specified, to ensure we wait for stunnel
 DB_HOST="${DB_HOST:-127.0.0.1}"
 DB_PORT="${DB_PORT:-15432}"
+
+if [ "${USE_STUNNEL}" -eq 1 ]; then
+  if ! command -v stunnel >/dev/null 2>&1; then
+    echo "stunnel is required but not installed" >&2
+    exit 1
+  fi
+
+  stunnel "${STUNNEL_CONF}"
+fi
 
 if [ -n "${DB_HOST:-}" ] && [ -n "${DB_PORT:-}" ]; then
   if [ "${DB_HOST}" = "127.0.0.1" ] || [ "${DB_HOST}" = "localhost" ]; then

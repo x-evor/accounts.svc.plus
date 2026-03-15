@@ -70,3 +70,5 @@ account-export.yaml
 
 # Security tooling reports
 .gitleaks/
+ansible/vars/*.host.yml
+ansible/vars/*.vault.yml
