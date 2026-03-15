@@ -3,6 +3,17 @@ set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
+apt_install() {
+  if command -v sudo >/dev/null 2>&1 && [[ "${EUID}" -ne 0 ]]; then
+    sudo apt-get update
+    sudo apt-get install -y golang
+    return
+  fi
+
+  apt-get update
+  apt-get install -y golang
+}
+
 if [ ! -f go.mod ]; then
   echo ">>> go.mod not found, initializing module"
   go mod init account
@@ -17,8 +28,7 @@ if ! command -v go >/dev/null; then
     brew install go@1.24
     brew link --overwrite --force go@1.24
   else
-    sudo apt-get update
-    sudo apt-get install -y golang
+    apt_install
   fi
 fi
 

@@ -135,9 +135,14 @@ case "$MODE" in
     fi
 
     if [[ -f "go.mod" ]]; then
-      need_cmd go
-      log "downloading Go dependencies (go mod download)"
-      go mod download
+      if command -v go >/dev/null 2>&1; then
+        log "downloading Go dependencies (go mod download)"
+        go mod download
+      elif [[ "${ACTION}" == "deploy" ]]; then
+        log "go not found; process deploy will install it during scripts/install-process.sh"
+      else
+        need_cmd go
+      fi
       did_any=true
     fi
     ;;
