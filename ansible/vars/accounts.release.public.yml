@@ -1,0 +1,11 @@
+service_compose_env_common:
+  CONFIG_TEMPLATE: /app/config/account.cloudrun.yaml
+  DB_TLS_HOST: postgresql-aws.svc.plus
+  DB_TLS_PORT: "5443"
+  POSTGRES_USER: postgres
+  DB_USER: postgres
+  DB_NAME: account
+  SMTP_HOST: smtp.qq.com
+  SMTP_PORT: "587"
+  SMTP_FROM: "XControl Account <manbuzhe2009@qq.com>"
+  SMTP_USERNAME: manbuzhe2009@qq.com
