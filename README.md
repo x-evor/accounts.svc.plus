@@ -47,6 +47,24 @@ cp .env.example .env
 make dev
 ```
 
+## Stripe 配置 (Stripe Billing Setup)
+
+Stripe 相关服务端能力现在由 `accounts.svc.plus` 承担，包括：
+
+- Checkout Session 创建
+- Customer Portal 跳转
+- Webhook 验签与订阅状态回写
+
+需要的环境变量：
+
+| 变量 | 用途 |
+| --- | --- |
+| `STRIPE_SECRET_KEY` | Stripe API secret key |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook endpoint secret |
+| `STRIPE_ALLOWED_PRICE_IDS` | 允许下单的 `price_...` 白名单，逗号分隔 |
+
+联调说明见 `docs/usage/stripe-billing.md`。
+
 ## 核心特性 & 技术栈 (Features & Tech Stack)
 
 核心特性：
@@ -66,6 +84,7 @@ make dev
 - 文档入口：`docs/README.md`
 - 快速开始：`docs/getting-started/quickstart.md`
 - 配置说明：`docs/usage/config.md`
+- Stripe 联调：`docs/usage/stripe-billing.md`
 - 部署方式：`docs/usage/deployment.md`
 - API 参考：`docs/api/overview.md`
 - 运维：`docs/operations/monitoring.md`, `docs/operations/troubleshooting.md`
