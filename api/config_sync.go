@@ -92,6 +92,7 @@ func (h *handler) respondSyncConfigSnapshot(c *gin.Context) {
 		for _, host := range hosts {
 			nodeName := resolveNodeName(host, registeredNames)
 			countryCode := countryCodeForHost(host)
+			nodeID := host
 			vlessURI := renderVLESSURIScheme(xhttpScheme, map[string]string{
 				"UUID":   proxyUUID,
 				"DOMAIN": host,
@@ -104,8 +105,10 @@ func (h *handler) respondSyncConfigSnapshot(c *gin.Context) {
 			})
 
 			profiles = append(profiles, gin.H{
-				"id":           strings.TrimSpace(user.ID),
+				"id":           nodeID,
 				"remark":       nodeName,
+				"display_name": nodeName,
+				"host":         host,
 				"address":      host,
 				"port":         443,
 				"uuid":         proxyUUID,
@@ -117,19 +120,24 @@ func (h *handler) respondSyncConfigSnapshot(c *gin.Context) {
 				"vless_uri":    vlessURI,
 			})
 			nodes = append(nodes, gin.H{
-				"id":           strings.TrimSpace(user.ID),
-				"name":         nodeName,
-				"protocol":     "vless",
-				"transport":    "xhttp",
-				"security":     "tls",
-				"address":      host,
-				"port":         443,
-				"uuid":         proxyUUID,
-				"flow":         "",
-				"source":       "server",
-				"country_code": countryCode,
-				"updated_at":   updatedAt,
-				"vless_uri":    vlessURI,
+				"id":              nodeID,
+				"name":            nodeName,
+				"display_name":    nodeName,
+				"remark":          nodeName,
+				"host":            host,
+				"protocol":        "vless",
+				"transport":       "xhttp",
+				"security":        "tls",
+				"address":         host,
+				"port":            443,
+				"server_name":     host,
+				"uuid":            proxyUUID,
+				"flow":            "",
+				"source":          "server",
+				"country_code":    countryCode,
+				"updated_at":      updatedAt,
+				"vless_uri":       vlessURI,
+				"uri_scheme_xhttp": vlessURI,
 			})
 		}
 	}
