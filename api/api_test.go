@@ -112,6 +112,14 @@ type testEmailSender struct {
 	messages []capturedEmail
 }
 
+type stubAgentStatusReader struct {
+	statuses []agentserver.StatusSnapshot
+}
+
+func (s stubAgentStatusReader) Statuses() []agentserver.StatusSnapshot {
+	return append([]agentserver.StatusSnapshot(nil), s.statuses...)
+}
+
 func (s *testEmailSender) Send(ctx context.Context, msg EmailMessage) error {
 	_ = ctx
 	s.mu.Lock()
@@ -640,6 +648,60 @@ func TestSyncConfigSnapshotFallsBackWhenRenderFails(t *testing.T) {
 	}
 	if vlessURI, ok := resp.Nodes[0]["vless_uri"].(string); !ok || strings.TrimSpace(vlessURI) == "" {
 		t.Fatalf("expected fallback node payload to include vless_uri, got %v", resp.Nodes[0]["vless_uri"])
+	}
+}
+
+func TestSyncConfigSnapshotIncludesNodeDisplayMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router, _, token := newAuthenticatedSyncHarness(t, WithAgentStatusReader(stubAgentStatusReader{
+		statuses: []agentserver.StatusSnapshot{
+			{Agent: agentserver.Identity{ID: "jp-xhttp.svc.plus", Name: "Japan Node"}},
+			{Agent: agentserver.Identity{ID: "us-xhttp.svc.plus", Name: "US Node"}},
+		},
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/sync/config?since_version=0", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected sync config success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeSyncConfigResponse(t, rr)
+	if len(resp.Nodes) != 2 {
+		t.Fatalf("expected 2 nodes, got %d", len(resp.Nodes))
+	}
+
+	byHost := make(map[string]map[string]interface{}, len(resp.Nodes))
+	for _, node := range resp.Nodes {
+		host, _ := node["host"].(string)
+		if strings.TrimSpace(host) == "" {
+			t.Fatalf("expected node host to be populated: %#v", node)
+		}
+		byHost[host] = node
+	}
+
+	jp := byHost["jp-xhttp.svc.plus"]
+	if jp == nil {
+		t.Fatalf("expected jp-xhttp.svc.plus node in response: %#v", byHost)
+	}
+	if got, _ := jp["id"].(string); got != "jp-xhttp.svc.plus" {
+		t.Fatalf("expected node id to match host, got %q", got)
+	}
+	if got, _ := jp["name"].(string); got != "Japan Node" {
+		t.Fatalf("expected node name to preserve display name, got %q", got)
+	}
+	if got, _ := jp["display_name"].(string); got != "Japan Node" {
+		t.Fatalf("expected display_name to preserve display name, got %q", got)
+	}
+	if got, _ := jp["server_name"].(string); got != "jp-xhttp.svc.plus" {
+		t.Fatalf("expected server_name to match host, got %q", got)
+	}
+	if got, _ := jp["uri_scheme_xhttp"].(string); strings.TrimSpace(got) == "" {
+		t.Fatalf("expected uri_scheme_xhttp to be populated")
 	}
 }
 
