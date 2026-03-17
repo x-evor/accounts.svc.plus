@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -36,6 +37,19 @@ type apiResponse struct {
 	Secret    string                 `json:"secret"`
 	Otpauth   string                 `json:"otpauth_url"`
 	ExpiresAt string                 `json:"expiresAt"`
+}
+
+type syncConfigResponse struct {
+	Changed      bool                     `json:"changed"`
+	Version      int64                    `json:"version"`
+	RenderedJSON string                   `json:"rendered_json"`
+	Digest       string                   `json:"digest"`
+	Warnings     []string                 `json:"warnings"`
+	Nodes        []map[string]interface{} `json:"nodes"`
+	Meta         struct {
+		Digest   string   `json:"digest"`
+		Warnings []string `json:"warnings"`
+	} `json:"meta"`
 }
 
 type capturedEmail struct {
@@ -164,6 +178,51 @@ func decodeResponse(t *testing.T, rr *httptest.ResponseRecorder) apiResponse {
 	var resp apiResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
+	}
+	return resp
+}
+
+func newAuthenticatedSyncHarness(t *testing.T, opts ...Option) (*gin.Engine, *store.User, string) {
+	t.Helper()
+
+	ctx := context.Background()
+	st := store.NewMemoryStore()
+	user := &store.User{
+		Name:          "Sync User",
+		Email:         "sync@example.com",
+		EmailVerified: true,
+		Role:          store.RoleUser,
+		Level:         store.LevelUser,
+		Active:        true,
+	}
+	if err := st.CreateUser(ctx, user); err != nil {
+		t.Fatalf("create sync user: %v", err)
+	}
+
+	token := "sync-session-token"
+	if err := st.CreateSession(ctx, token, user.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("create sync session: %v", err)
+	}
+
+	freshUser, err := st.GetUserByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("reload sync user: %v", err)
+	}
+
+	router := gin.New()
+	baseOpts := []Option{
+		WithStore(st),
+		WithEmailVerification(false),
+	}
+	RegisterRoutes(router, append(baseOpts, opts...)...)
+	return router, freshUser, token
+}
+
+func decodeSyncConfigResponse(t *testing.T, rr *httptest.ResponseRecorder) syncConfigResponse {
+	t.Helper()
+	var resp syncConfigResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode sync response: %v", err)
 	}
 	return resp
 }
@@ -471,6 +530,116 @@ func TestOAuthCallbackIssuesOneTimeExchangeCode(t *testing.T) {
 	}
 	if replayResp.Error != "invalid_exchange_code" {
 		t.Fatalf("expected invalid_exchange_code on replay, got %#v", replayResp.Error)
+	}
+}
+
+func TestSyncConfigSnapshotReturnsRenderedJSON(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router, user, token := newAuthenticatedSyncHarness(t)
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/sync/config?since_version=0", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected sync config success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeSyncConfigResponse(t, rr)
+	if !resp.Changed {
+		t.Fatalf("expected changed=true for initial sync")
+	}
+	if resp.Version != deriveSyncVersion(user) {
+		t.Fatalf("expected sync version %d, got %d", deriveSyncVersion(user), resp.Version)
+	}
+	if strings.TrimSpace(resp.RenderedJSON) == "" {
+		t.Fatalf("expected rendered_json to be returned")
+	}
+	if len(resp.Nodes) == 0 {
+		t.Fatalf("expected sync response to include nodes")
+	}
+	if strings.TrimSpace(resp.Digest) == "" {
+		t.Fatalf("expected digest to be populated")
+	}
+	if resp.Meta.Digest != resp.Digest {
+		t.Fatalf("expected top-level digest and meta digest to match, got %q and %q", resp.Digest, resp.Meta.Digest)
+	}
+	if len(resp.Warnings) != 0 || len(resp.Meta.Warnings) != 0 {
+		t.Fatalf("expected no warnings, got top=%v meta=%v", resp.Warnings, resp.Meta.Warnings)
+	}
+}
+
+func TestSyncConfigSnapshotSkipsRenderingWhenVersionUnchanged(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	renderCalls := 0
+	router, user, token := newAuthenticatedSyncHarness(t, WithXrayConfigRenderer(func(*store.User) (string, string, []string, error) {
+		renderCalls++
+		return `{"outbounds":[{"tag":"proxy","protocol":"vless"}]}`, "digest", nil, nil
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/sync/config?since_version="+strconv.FormatInt(deriveSyncVersion(user), 10), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected unchanged sync config success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeSyncConfigResponse(t, rr)
+	if resp.Changed {
+		t.Fatalf("expected changed=false when since_version matches current version")
+	}
+	if renderCalls != 0 {
+		t.Fatalf("expected renderer to be skipped when config version is unchanged, got %d call(s)", renderCalls)
+	}
+	if strings.TrimSpace(resp.RenderedJSON) != "" {
+		t.Fatalf("expected no rendered_json when sync payload is unchanged, got %q", resp.RenderedJSON)
+	}
+	if len(resp.Nodes) != 0 {
+		t.Fatalf("expected unchanged sync response to omit nodes, got %d", len(resp.Nodes))
+	}
+}
+
+func TestSyncConfigSnapshotFallsBackWhenRenderFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router, _, token := newAuthenticatedSyncHarness(t, WithXrayConfigRenderer(func(*store.User) (string, string, []string, error) {
+		return "", "", nil, errors.New("boom")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/sync/config?since_version=0", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected sync config to degrade gracefully, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	resp := decodeSyncConfigResponse(t, rr)
+	if !resp.Changed {
+		t.Fatalf("expected changed=true for fallback sync payload")
+	}
+	if strings.TrimSpace(resp.RenderedJSON) != "" {
+		t.Fatalf("expected rendered_json to be omitted on render failure, got %q", resp.RenderedJSON)
+	}
+	if len(resp.Nodes) == 0 {
+		t.Fatalf("expected fallback sync response to include nodes")
+	}
+	if len(resp.Meta.Warnings) == 0 {
+		t.Fatalf("expected fallback warning, got none")
+	}
+	if got := strings.TrimSpace(resp.Meta.Warnings[0]); !strings.Contains(got, "falling back to node metadata") {
+		t.Fatalf("expected fallback warning, got %v", resp.Meta.Warnings)
+	}
+	if len(resp.Warnings) != len(resp.Meta.Warnings) || resp.Warnings[0] != resp.Meta.Warnings[0] {
+		t.Fatalf("expected top-level warnings to mirror meta warnings, got top=%v meta=%v", resp.Warnings, resp.Meta.Warnings)
+	}
+	if vlessURI, ok := resp.Nodes[0]["vless_uri"].(string); !ok || strings.TrimSpace(vlessURI) == "" {
+		t.Fatalf("expected fallback node payload to include vless_uri, got %v", resp.Nodes[0]["vless_uri"])
 	}
 }
 

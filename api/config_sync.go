@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -52,14 +53,26 @@ func (h *handler) respondSyncConfigSnapshot(c *gin.Context) {
 		updatedAt = user.UpdatedAt.UTC()
 	}
 
-	renderedJSON, digest, warnings, err := h.renderUserXrayConfig(user)
-	_ = renderedJSON // server-side config, not sent to clients
-	if err != nil {
-		respondError(c, http.StatusInternalServerError, "config_render_failed", "failed to render xray config")
-		return
+	changed := sinceVersion < version
+	renderedJSON := ""
+	digest := ""
+	warnings := []string{}
+	if changed {
+		var err error
+		renderedJSON, digest, warnings, err = h.renderUserXrayConfig(user)
+		if err != nil {
+			slog.Warn(
+				"desktop sync config render failed; continuing with node metadata only",
+				"user_id", strings.TrimSpace(user.ID),
+				"user_email", strings.TrimSpace(user.Email),
+				"error", err,
+			)
+			renderedJSON = ""
+			digest = ""
+			warnings = append(warnings, "rendered xray config unavailable; falling back to node metadata")
+		}
 	}
 
-	changed := sinceVersion < version
 	profiles := []gin.H{}
 	nodes := []gin.H{}
 	if changed {
@@ -128,6 +141,7 @@ func (h *handler) respondSyncConfigSnapshot(c *gin.Context) {
 		"updated_at":     updatedAt,
 		"profiles":       profiles,
 		"nodes":          nodes,
+		"rendered_json":  renderedJSON,
 		"routes":         []gin.H{},
 		"dns": gin.H{
 			"mode":    "secure_tunnel",
@@ -190,6 +204,10 @@ func deriveSyncVersion(user *store.User) int64 {
 }
 
 func (h *handler) renderUserXrayConfig(user *store.User) (string, string, []string, error) {
+	if h.xrayConfigRenderer != nil {
+		return h.xrayConfigRenderer(user)
+	}
+
 	domain := extractHostFromPublicURL(h.publicURL)
 	if domain == "" {
 		domain = "accounts.svc.plus"

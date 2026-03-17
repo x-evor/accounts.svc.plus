@@ -80,6 +80,7 @@ type handler struct {
 	oauthProviders            map[string]auth.OAuthProvider
 	oauthFrontendURL          string
 	publicURL                 string
+	xrayConfigRenderer        func(*store.User) (string, string, []string, error)
 	agentRegistry             agentRegistry
 	db                        *gorm.DB
 	stripe                    *stripeClient
@@ -219,6 +220,16 @@ func WithOAuthProviders(providers map[string]auth.OAuthProvider) Option {
 func WithServerPublicURL(url string) Option {
 	return func(h *handler) {
 		h.publicURL = url
+	}
+}
+
+// WithXrayConfigRenderer overrides sync config rendering.
+// It exists primarily to make sync endpoint behavior testable.
+func WithXrayConfigRenderer(renderer func(*store.User) (string, string, []string, error)) Option {
+	return func(h *handler) {
+		if renderer != nil {
+			h.xrayConfigRenderer = renderer
+		}
 	}
 }
 
