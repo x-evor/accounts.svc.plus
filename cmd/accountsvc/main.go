@@ -1293,6 +1293,7 @@ func openAdminSettingsDB(cfg config.Store) (*gorm.DB, func(context.Context) erro
 
 	if err := db.AutoMigrate(
 		&model.AdminSetting{},
+		&model.HomepageVideoSetting{},
 		&model.SandboxBinding{},
 		&model.Tenant{},
 		&model.TenantDomain{},

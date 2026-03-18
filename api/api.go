@@ -331,6 +331,7 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authGroup.GET("/mfa/status", h.mfaStatus)
 	authGroup.GET("/sync/config", h.syncConfigSnapshot)
 	authGroup.POST("/sync/ack", h.syncConfigAck)
+	authGroup.GET("/homepage-video", h.getHomepageVideoPublic)
 
 	// Sandbox binding read endpoint.
 	// Used by the Console Guest/Demo experience. Must be readable either via a
@@ -366,6 +367,8 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 
 	authProtected.GET("/admin/settings", h.getAdminSettings)
 	authProtected.POST("/admin/settings", h.updateAdminSettings)
+	authProtected.GET("/admin/homepage-video", h.getHomepageVideoSettings)
+	authProtected.PUT("/admin/homepage-video", h.updateHomepageVideoSettings)
 
 	// Backward-compatible auth-scoped admin routes consumed by the dashboard BFF.
 	authProtected.GET("/admin/users/metrics", h.adminUsersMetrics)
