@@ -705,6 +705,41 @@ func TestSyncConfigSnapshotIncludesNodeDisplayMetadata(t *testing.T) {
 	}
 }
 
+func TestSyncConfigAckReturnsReceipt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	router, user, token := newAuthenticatedSyncHarness(t)
+	body := bytes.NewBufferString(`{
+		"version": 123,
+		"device_id": "deadbeef",
+		"applied_at": "2026-03-20T12:00:00Z"
+	}`)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/sync/ack", body)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected sync ack success, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var payload map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode ack payload: %v", err)
+	}
+	if acked, _ := payload["acked"].(bool); !acked {
+		t.Fatalf("expected acked=true, got %#v", payload["acked"])
+	}
+	if got, _ := payload["device_id"].(string); got != "deadbeef" {
+		t.Fatalf("expected device_id to round-trip, got %q", got)
+	}
+	if got, _ := payload["user_id"].(string); got != user.ID {
+		t.Fatalf("expected user_id %q, got %q", user.ID, got)
+	}
+}
+
 func TestResendVerificationEndpoint(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
