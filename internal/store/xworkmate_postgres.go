@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -224,7 +225,8 @@ LIMIT 1`
 
 func (s *postgresStore) GetXWorkmateProfile(ctx context.Context, tenantID, userID, scope string) (*XWorkmateProfile, error) {
 	profile := &XWorkmateProfile{}
-	query := `SELECT id, tenant_id, user_id, scope, openclaw_url, openclaw_origin, vault_url, vault_namespace, vault_secret_path, vault_secret_key, apisix_url, created_at, updated_at
+	var secretLocatorsJSON string
+	query := `SELECT id, tenant_id, user_id, scope, openclaw_url, openclaw_origin, vault_url, vault_namespace, vault_secret_path, vault_secret_key, COALESCE(secret_locators, '[]'), apisix_url, created_at, updated_at
 FROM xworkmate_profiles
 WHERE tenant_id = $1 AND user_id = $2 AND scope = $3
 LIMIT 1`
@@ -246,6 +248,7 @@ LIMIT 1`
 		&profile.VaultNamespace,
 		&profile.VaultSecretPath,
 		&profile.VaultSecretKey,
+		&secretLocatorsJSON,
 		&profile.ApisixURL,
 		&profile.CreatedAt,
 		&profile.UpdatedAt,
@@ -256,6 +259,10 @@ LIMIT 1`
 		return nil, err
 	}
 
+	if err := json.Unmarshal([]byte(secretLocatorsJSON), &profile.SecretLocators); err != nil {
+		return nil, err
+	}
+	NormalizeXWorkmateProfile(profile)
 	return profile, nil
 }
 
@@ -269,10 +276,15 @@ func (s *postgresStore) UpsertXWorkmateProfile(ctx context.Context, profile *XWo
 		profile.ID = uuid.NewString()
 	}
 
+	locatorsJSON, err := json.Marshal(profile.SecretLocators)
+	if err != nil {
+		return err
+	}
+
 	query := `INSERT INTO xworkmate_profiles (
-  id, tenant_id, user_id, scope, openclaw_url, openclaw_origin, vault_url, vault_namespace, vault_secret_path, vault_secret_key, apisix_url, created_at, updated_at
+  id, tenant_id, user_id, scope, openclaw_url, openclaw_origin, vault_url, vault_namespace, vault_secret_path, vault_secret_key, secret_locators, apisix_url, created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now(), now())
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now(), now())
 ON CONFLICT (tenant_id, user_id, scope) DO UPDATE
 SET openclaw_url = EXCLUDED.openclaw_url,
     openclaw_origin = EXCLUDED.openclaw_origin,
@@ -280,6 +292,7 @@ SET openclaw_url = EXCLUDED.openclaw_url,
     vault_namespace = EXCLUDED.vault_namespace,
     vault_secret_path = EXCLUDED.vault_secret_path,
     vault_secret_key = EXCLUDED.vault_secret_key,
+    secret_locators = EXCLUDED.secret_locators,
     apisix_url = EXCLUDED.apisix_url,
     updated_at = now()
 RETURNING created_at, updated_at`
@@ -297,6 +310,7 @@ RETURNING created_at, updated_at`
 		profile.VaultNamespace,
 		profile.VaultSecretPath,
 		profile.VaultSecretKey,
+		string(locatorsJSON),
 		profile.ApisixURL,
 	).Scan(&profile.CreatedAt, &profile.UpdatedAt)
 }

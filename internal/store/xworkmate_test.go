@@ -89,6 +89,7 @@ func TestMemoryStoreResolveTenantAndProfile(t *testing.T) {
 		Scope:           XWorkmateProfileScopeUserPrivate,
 		OpenclawURL:     "wss://openclaw.tenant-one.svc.plus",
 		VaultSecretPath: "kv/openclaw",
+		VaultSecretKey:  "token",
 	}); err != nil {
 		t.Fatalf("upsert private profile: %v", err)
 	}
@@ -111,6 +112,21 @@ func TestMemoryStoreResolveTenantAndProfile(t *testing.T) {
 	if profile.OpenclawURL != "wss://openclaw.tenant-one.svc.plus" {
 		t.Fatalf("expected persisted openclaw url, got %q", profile.OpenclawURL)
 	}
+	if profile.VaultSecretPath != "kv/openclaw" || profile.VaultSecretKey != "token" {
+		t.Fatalf("expected legacy secret fields to round-trip, got %#v", profile)
+	}
+	if len(profile.SecretLocators) != 1 {
+		t.Fatalf("expected synthesized secret locator, got %#v", profile.SecretLocators)
+	}
+	if profile.SecretLocators[0].Provider != XWorkmateSecretLocatorProviderVault {
+		t.Fatalf("expected vault provider, got %#v", profile.SecretLocators[0])
+	}
+	if profile.SecretLocators[0].Target != XWorkmateSecretLocatorTargetOpenclawGatewayToken {
+		t.Fatalf("expected openclaw target, got %#v", profile.SecretLocators[0])
+	}
+	if profile.SecretLocators[0].SecretPath != "kv/openclaw" || profile.SecretLocators[0].SecretKey != "token" {
+		t.Fatalf("expected synthesized secret locator path/key, got %#v", profile.SecretLocators[0])
+	}
 
 	memberships, err := st.ListTenantMembershipsByUser(ctx, "user-1")
 	if err != nil {
@@ -121,5 +137,68 @@ func TestMemoryStoreResolveTenantAndProfile(t *testing.T) {
 	}
 	if memberships[0].TenantName != "Tenant One" {
 		t.Fatalf("expected tenant name to be populated, got %q", memberships[0].TenantName)
+	}
+}
+
+func TestMemoryStorePersistsExplicitSecretLocators(t *testing.T) {
+	ctx := context.Background()
+	st := NewMemoryStore()
+
+	if err := st.EnsureTenant(ctx, &Tenant{
+		ID:      "tenant-locator-1",
+		Name:    "Tenant Locator",
+		Edition: TenantPrivateEdition,
+	}); err != nil {
+		t.Fatalf("ensure tenant: %v", err)
+	}
+
+	locators := []XWorkmateSecretLocator{
+		{
+			ID:         "locator-openclaw",
+			Provider:   "vault",
+			SecretPath: "kv/openclaw",
+			SecretKey:  "gateway-token",
+			Target:     XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+			Required:   true,
+		},
+		{
+			ID:         "locator-ai-gateway",
+			Provider:   "vault",
+			SecretPath: "kv/ai",
+			SecretKey:  "access-token",
+			Target:     XWorkmateSecretLocatorTargetAIGatewayAccessToken,
+		},
+	}
+	if err := st.UpsertXWorkmateProfile(ctx, &XWorkmateProfile{
+		TenantID:       "tenant-locator-1",
+		UserID:         "user-2",
+		Scope:          XWorkmateProfileScopeUserPrivate,
+		VaultURL:       "https://vault.example.com",
+		VaultNamespace: "team-locators",
+		SecretLocators: locators,
+	}); err != nil {
+		t.Fatalf("upsert profile: %v", err)
+	}
+
+	profile, err := st.GetXWorkmateProfile(ctx, "tenant-locator-1", "user-2", XWorkmateProfileScopeUserPrivate)
+	if err != nil {
+		t.Fatalf("get profile: %v", err)
+	}
+
+	if len(profile.SecretLocators) != len(locators) {
+		t.Fatalf("expected %d locators, got %#v", len(locators), profile.SecretLocators)
+	}
+	for i := range locators {
+		if profile.SecretLocators[i].ID != locators[i].ID ||
+			profile.SecretLocators[i].Provider != locators[i].Provider ||
+			profile.SecretLocators[i].SecretPath != locators[i].SecretPath ||
+			profile.SecretLocators[i].SecretKey != locators[i].SecretKey ||
+			profile.SecretLocators[i].Target != locators[i].Target ||
+			profile.SecretLocators[i].Required != locators[i].Required {
+			t.Fatalf("locator %d mismatch: got %#v want %#v", i, profile.SecretLocators[i], locators[i])
+		}
+	}
+	if profile.VaultSecretPath != "kv/openclaw" || profile.VaultSecretKey != "gateway-token" {
+		t.Fatalf("expected openclaw locator to back legacy fields, got %#v", profile)
 	}
 }

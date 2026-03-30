@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -27,6 +29,12 @@ const (
 
 	XWorkmateProfileScopeTenantShared = "tenant-shared"
 	XWorkmateProfileScopeUserPrivate  = "user-private"
+
+	XWorkmateSecretLocatorProviderVault = "vault"
+
+	XWorkmateSecretLocatorTargetOpenclawGatewayToken = "openclaw.gateway_token"
+	XWorkmateSecretLocatorTargetAIGatewayAccessToken = "ai_gateway.access_token"
+	XWorkmateSecretLocatorTargetOllamaCloudAPIKey    = "ollama_cloud.api_key"
 
 	SharedXWorkmateTenantID   = "svc-plus-xworkmate"
 	SharedXWorkmateTenantName = "svc.plus XWorkmate"
@@ -80,9 +88,19 @@ type XWorkmateProfile struct {
 	VaultNamespace  string
 	VaultSecretPath string
 	VaultSecretKey  string
+	SecretLocators  []XWorkmateSecretLocator
 	ApisixURL       string
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+}
+
+type XWorkmateSecretLocator struct {
+	ID         string `json:"id"`
+	Provider   string `json:"provider"`
+	SecretPath string `json:"secretPath"`
+	SecretKey  string `json:"secretKey"`
+	Target     string `json:"target"`
+	Required   bool   `json:"required"`
 }
 
 func NormalizeTenantEdition(value string) string {
@@ -128,6 +146,68 @@ func NormalizeXWorkmateProfileScope(value string) string {
 	default:
 		return XWorkmateProfileScopeUserPrivate
 	}
+}
+
+func NormalizeXWorkmateSecretLocator(locator *XWorkmateSecretLocator) {
+	if locator == nil {
+		return
+	}
+
+	locator.ID = strings.TrimSpace(locator.ID)
+	if locator.ID == "" {
+		locator.ID = uuid.NewString()
+	}
+	locator.Provider = strings.ToLower(strings.TrimSpace(locator.Provider))
+	if locator.Provider == "" {
+		locator.Provider = XWorkmateSecretLocatorProviderVault
+	}
+	locator.SecretPath = strings.Trim(strings.TrimSpace(locator.SecretPath), "/")
+	locator.SecretKey = strings.TrimSpace(locator.SecretKey)
+	locator.Target = strings.ToLower(strings.TrimSpace(locator.Target))
+}
+
+func cloneXWorkmateSecretLocators(locators []XWorkmateSecretLocator) []XWorkmateSecretLocator {
+	if len(locators) == 0 {
+		return []XWorkmateSecretLocator{}
+	}
+
+	cloned := make([]XWorkmateSecretLocator, len(locators))
+	copy(cloned, locators)
+	return cloned
+}
+
+func legacyXWorkmateSecretLocatorID(profile *XWorkmateProfile) string {
+	if profile == nil {
+		return "legacy|xworkmate|openclaw.gateway_token"
+	}
+
+	return strings.Join([]string{
+		"legacy",
+		strings.TrimSpace(profile.TenantID),
+		strings.TrimSpace(profile.UserID),
+		NormalizeXWorkmateProfileScope(profile.Scope),
+		XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+	}, "|")
+}
+
+func synthesizeXWorkmateSecretLocatorFromLegacy(profile *XWorkmateProfile) XWorkmateSecretLocator {
+	return XWorkmateSecretLocator{
+		ID:         legacyXWorkmateSecretLocatorID(profile),
+		Provider:   XWorkmateSecretLocatorProviderVault,
+		SecretPath: profile.VaultSecretPath,
+		SecretKey:  profile.VaultSecretKey,
+		Target:     XWorkmateSecretLocatorTargetOpenclawGatewayToken,
+	}
+}
+
+func compatibilityXWorkmateSecretLocator(locators []XWorkmateSecretLocator) (string, string, bool) {
+	for _, locator := range locators {
+		if locator.Target == XWorkmateSecretLocatorTargetOpenclawGatewayToken &&
+			locator.SecretPath != "" && locator.SecretKey != "" {
+			return locator.SecretPath, locator.SecretKey, true
+		}
+	}
+	return "", "", false
 }
 
 func NormalizeHostname(value string) string {
@@ -217,6 +297,26 @@ func NormalizeXWorkmateProfile(profile *XWorkmateProfile) {
 	profile.VaultNamespace = strings.TrimSpace(profile.VaultNamespace)
 	profile.VaultSecretPath = strings.Trim(strings.TrimSpace(profile.VaultSecretPath), "/")
 	profile.VaultSecretKey = strings.TrimSpace(profile.VaultSecretKey)
+	profile.SecretLocators = cloneXWorkmateSecretLocators(profile.SecretLocators)
+	for i := range profile.SecretLocators {
+		NormalizeXWorkmateSecretLocator(&profile.SecretLocators[i])
+	}
+	if len(profile.SecretLocators) == 0 && profile.VaultSecretPath != "" && profile.VaultSecretKey != "" {
+		profile.SecretLocators = []XWorkmateSecretLocator{synthesizeXWorkmateSecretLocatorFromLegacy(profile)}
+	}
+	if (profile.VaultSecretPath == "" || profile.VaultSecretKey == "") && len(profile.SecretLocators) > 0 {
+		if secretPath, secretKey, ok := compatibilityXWorkmateSecretLocator(profile.SecretLocators); ok {
+			if profile.VaultSecretPath == "" {
+				profile.VaultSecretPath = secretPath
+			}
+			if profile.VaultSecretKey == "" {
+				profile.VaultSecretKey = secretKey
+			}
+		}
+	}
+	if profile.SecretLocators == nil {
+		profile.SecretLocators = []XWorkmateSecretLocator{}
+	}
 	profile.ApisixURL = strings.TrimSpace(profile.ApisixURL)
 }
 

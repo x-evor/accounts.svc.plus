@@ -26,13 +26,23 @@ type xworkmateAccessContext struct {
 }
 
 type xworkmateProfilePayload struct {
-	OpenclawURL     string `json:"openclawUrl"`
-	OpenclawOrigin  string `json:"openclawOrigin"`
-	VaultURL        string `json:"vaultUrl"`
-	VaultNamespace  string `json:"vaultNamespace"`
-	VaultSecretPath string `json:"vaultSecretPath"`
-	VaultSecretKey  string `json:"vaultSecretKey"`
-	ApisixURL       string `json:"apisixUrl"`
+	OpenclawURL     string                          `json:"openclawUrl"`
+	OpenclawOrigin  string                          `json:"openclawOrigin"`
+	VaultURL        string                          `json:"vaultUrl"`
+	VaultNamespace  string                          `json:"vaultNamespace"`
+	VaultSecretPath string                          `json:"vaultSecretPath"`
+	VaultSecretKey  string                          `json:"vaultSecretKey"`
+	SecretLocators  []xworkmateSecretLocatorPayload `json:"secretLocators"`
+	ApisixURL       string                          `json:"apisixUrl"`
+}
+
+type xworkmateSecretLocatorPayload struct {
+	ID         string `json:"id"`
+	Provider   string `json:"provider"`
+	SecretPath string `json:"secretPath"`
+	SecretKey  string `json:"secretKey"`
+	Target     string `json:"target"`
+	Required   bool   `json:"required"`
 }
 
 var xworkmateForbiddenTokenFields = map[string]struct{}{
@@ -252,10 +262,68 @@ func buildXWorkmateTokenConfigured(profile *store.XWorkmateProfile) gin.H {
 		return result
 	}
 
-	if strings.TrimSpace(profile.VaultSecretPath) != "" && strings.TrimSpace(profile.VaultSecretKey) != "" {
+	if hasOpenclawXWorkmateSecretLocator(profile) {
 		result["openclaw"] = true
 	}
 
+	return result
+}
+
+func hasOpenclawXWorkmateSecretLocator(profile *store.XWorkmateProfile) bool {
+	if profile == nil {
+		return false
+	}
+
+	if strings.TrimSpace(profile.VaultSecretPath) != "" && strings.TrimSpace(profile.VaultSecretKey) != "" {
+		return true
+	}
+	for _, locator := range profile.SecretLocators {
+		if locator.Target != store.XWorkmateSecretLocatorTargetOpenclawGatewayToken {
+			continue
+		}
+		if strings.TrimSpace(locator.SecretPath) != "" && strings.TrimSpace(locator.SecretKey) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func buildXWorkmateSecretLocators(profile *store.XWorkmateProfile) []gin.H {
+	if profile == nil || len(profile.SecretLocators) == 0 {
+		return []gin.H{}
+	}
+
+	result := make([]gin.H, 0, len(profile.SecretLocators))
+	for _, locator := range profile.SecretLocators {
+		entry := gin.H{
+			"id":         locator.ID,
+			"provider":   locator.Provider,
+			"secretPath": locator.SecretPath,
+			"secretKey":  locator.SecretKey,
+			"target":     locator.Target,
+			"required":   locator.Required,
+		}
+		result = append(result, entry)
+	}
+	return result
+}
+
+func buildStoreXWorkmateSecretLocators(locators []xworkmateSecretLocatorPayload) []store.XWorkmateSecretLocator {
+	if len(locators) == 0 {
+		return []store.XWorkmateSecretLocator{}
+	}
+
+	result := make([]store.XWorkmateSecretLocator, 0, len(locators))
+	for _, locator := range locators {
+		result = append(result, store.XWorkmateSecretLocator{
+			ID:         locator.ID,
+			Provider:   locator.Provider,
+			SecretPath: locator.SecretPath,
+			SecretKey:  locator.SecretKey,
+			Target:     locator.Target,
+			Required:   locator.Required,
+		})
+	}
 	return result
 }
 
@@ -284,6 +352,7 @@ func buildXWorkmateProfileResponse(access *xworkmateAccessContext, profile *stor
 		"vaultNamespace":  "",
 		"vaultSecretPath": "",
 		"vaultSecretKey":  "",
+		"secretLocators":  []gin.H{},
 		"apisixUrl":       "",
 	}
 	if profile != nil {
@@ -293,6 +362,7 @@ func buildXWorkmateProfileResponse(access *xworkmateAccessContext, profile *stor
 		resolvedProfile["vaultNamespace"] = profile.VaultNamespace
 		resolvedProfile["vaultSecretPath"] = profile.VaultSecretPath
 		resolvedProfile["vaultSecretKey"] = profile.VaultSecretKey
+		resolvedProfile["secretLocators"] = buildXWorkmateSecretLocators(profile)
 		resolvedProfile["apisixUrl"] = profile.ApisixURL
 	}
 
@@ -447,6 +517,7 @@ func (h *handler) updateXWorkmateProfile(c *gin.Context) {
 		VaultNamespace:  payload.VaultNamespace,
 		VaultSecretPath: payload.VaultSecretPath,
 		VaultSecretKey:  payload.VaultSecretKey,
+		SecretLocators:  buildStoreXWorkmateSecretLocators(payload.SecretLocators),
 		ApisixURL:       payload.ApisixURL,
 	}
 	if err := h.store.UpsertXWorkmateProfile(c.Request.Context(), profile); err != nil {

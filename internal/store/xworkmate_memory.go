@@ -258,6 +258,8 @@ func (s *memoryStore) GetXWorkmateProfile(ctx context.Context, tenantID, userID,
 	}
 
 	entry := *profile
+	entry.SecretLocators = cloneXWorkmateSecretLocators(entry.SecretLocators)
+	NormalizeXWorkmateProfile(&entry)
 	return &entry, nil
 }
 
@@ -294,6 +296,7 @@ func (s *memoryStore) UpsertXWorkmateProfile(ctx context.Context, profile *XWork
 		existing.VaultNamespace = profile.VaultNamespace
 		existing.VaultSecretPath = profile.VaultSecretPath
 		existing.VaultSecretKey = profile.VaultSecretKey
+		existing.SecretLocators = cloneXWorkmateSecretLocators(profile.SecretLocators)
 		existing.ApisixURL = profile.ApisixURL
 		existing.UpdatedAt = now
 		profile.CreatedAt = existing.CreatedAt
@@ -312,6 +315,7 @@ func (s *memoryStore) UpsertXWorkmateProfile(ctx context.Context, profile *XWork
 		VaultNamespace:  profile.VaultNamespace,
 		VaultSecretPath: profile.VaultSecretPath,
 		VaultSecretKey:  profile.VaultSecretKey,
+		SecretLocators:  cloneXWorkmateSecretLocators(profile.SecretLocators),
 		ApisixURL:       profile.ApisixURL,
 		CreatedAt:       now,
 		UpdatedAt:       now,
