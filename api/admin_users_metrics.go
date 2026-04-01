@@ -189,6 +189,10 @@ func registerAdminRoutes(group *gin.RouterGroup, h *handler) {
 	admin := group.Group("/admin")
 	admin.GET("/users/metrics", h.adminUsersMetrics)
 	admin.GET("/agents/status", h.adminAgentStatus)
+	admin.GET("/traffic/nodes", h.adminTrafficNodes)
+	admin.GET("/traffic/accounts/:uuid", h.adminTrafficAccount)
+	admin.GET("/collector/status", h.adminCollectorStatus)
+	admin.GET("/scheduler/status", h.adminSchedulerStatus)
 
 	// User management
 	admin.POST("/users", h.createCustomUser)

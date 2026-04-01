@@ -73,6 +73,105 @@ type Agent struct {
 	UpdatedAt     time.Time  `json:"updatedAt"`
 }
 
+const (
+	RatingStatusPending = "pending"
+	RatingStatusRated   = "rated"
+)
+
+type TrafficStatCheckpoint struct {
+	NodeID            string
+	AccountUUID       string
+	LastUplinkTotal   int64
+	LastDownlinkTotal int64
+	LastSeenAt        time.Time
+	XrayRevision      string
+	ResetEpoch        int64
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type TrafficMinuteBucket struct {
+	BucketStart    time.Time
+	NodeID         string
+	AccountUUID    string
+	Region         string
+	LineCode       string
+	UplinkBytes    int64
+	DownlinkBytes  int64
+	TotalBytes     int64
+	Multiplier     float64
+	RatingStatus   string
+	SourceRevision string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+}
+
+type BillingLedgerEntry struct {
+	ID                 string
+	AccountUUID        string
+	BucketStart        time.Time
+	BucketEnd          time.Time
+	EntryType          string
+	RatedBytes         int64
+	AmountDelta        float64
+	BalanceAfter       float64
+	PricingRuleVersion string
+	CreatedAt          time.Time
+}
+
+type AccountQuotaState struct {
+	AccountUUID            string
+	RemainingIncludedQuota int64
+	CurrentBalance         float64
+	Arrears                bool
+	ThrottleState          string
+	SuspendState           string
+	LastRatedBucketAt      *time.Time
+	EffectiveAt            time.Time
+	UpdatedAt              time.Time
+}
+
+type AccountPolicySnapshot struct {
+	AccountUUID        string
+	PolicyVersion      string
+	AuthState          string
+	RateProfile        string
+	ConnProfile        string
+	EligibleNodeGroups []string
+	PreferredStrategy  string
+	DegradeMode        string
+	ExpiresAt          time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type NodeHealthSnapshot struct {
+	NodeID            string
+	Region            string
+	LineCode          string
+	PricingGroup      string
+	StatsEnabled      bool
+	XrayRevision      string
+	Healthy           bool
+	LatencyMS         int
+	ErrorRate         float64
+	ActiveConnections int
+	HealthScore       float64
+	SampledAt         time.Time
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+}
+
+type SchedulerDecision struct {
+	ID          string
+	AccountUUID string
+	NodeGroup   string
+	Strategy    string
+	Decision    string
+	GeneratedAt time.Time
+	CreatedAt   time.Time
+}
+
 // Store provides persistence operations for users.
 type Store interface {
 	CreateUser(ctx context.Context, user *User) error
@@ -105,6 +204,23 @@ type Store interface {
 	ListAgents(ctx context.Context) ([]*Agent, error)
 	DeleteAgent(ctx context.Context, id string) error
 	DeleteStaleAgents(ctx context.Context, staleThreshold time.Duration) (int, error)
+
+	UpsertTrafficStatCheckpoint(ctx context.Context, checkpoint *TrafficStatCheckpoint) error
+	GetTrafficStatCheckpoint(ctx context.Context, nodeID, accountUUID string) (*TrafficStatCheckpoint, error)
+	ListTrafficStatCheckpoints(ctx context.Context) ([]TrafficStatCheckpoint, error)
+	UpsertTrafficMinuteBucket(ctx context.Context, bucket *TrafficMinuteBucket) error
+	ListTrafficMinuteBucketsByAccount(ctx context.Context, accountUUID string, start, end time.Time) ([]TrafficMinuteBucket, error)
+	ListTrafficMinuteBuckets(ctx context.Context) ([]TrafficMinuteBucket, error)
+	InsertBillingLedgerEntry(ctx context.Context, entry *BillingLedgerEntry) error
+	ListBillingLedgerByAccount(ctx context.Context, accountUUID string, limit int) ([]BillingLedgerEntry, error)
+	UpsertAccountQuotaState(ctx context.Context, state *AccountQuotaState) error
+	GetAccountQuotaState(ctx context.Context, accountUUID string) (*AccountQuotaState, error)
+	UpsertAccountPolicySnapshot(ctx context.Context, snapshot *AccountPolicySnapshot) error
+	GetLatestAccountPolicySnapshot(ctx context.Context, accountUUID string) (*AccountPolicySnapshot, error)
+	UpsertNodeHealthSnapshot(ctx context.Context, snapshot *NodeHealthSnapshot) error
+	ListLatestNodeHealthSnapshots(ctx context.Context) ([]NodeHealthSnapshot, error)
+	InsertSchedulerDecision(ctx context.Context, decision *SchedulerDecision) error
+	ListRecentSchedulerDecisions(ctx context.Context, limit int) ([]SchedulerDecision, error)
 
 	EnsureTenant(ctx context.Context, tenant *Tenant) error
 	EnsureTenantDomain(ctx context.Context, domain *TenantDomain) error
@@ -144,6 +260,13 @@ type memoryStore struct {
 	tenantDomains           map[string]*TenantDomain
 	tenantMemberships       map[string]map[string]*TenantMembership
 	xworkmateProfiles       map[string]*XWorkmateProfile
+	trafficStatCheckpoints  map[string]*TrafficStatCheckpoint
+	trafficMinuteBuckets    map[string]*TrafficMinuteBucket
+	billingLedgerEntries    map[string]*BillingLedgerEntry
+	accountQuotaStates      map[string]*AccountQuotaState
+	accountPolicySnapshots  map[string]*AccountPolicySnapshot
+	nodeHealthSnapshots     map[string]*NodeHealthSnapshot
+	schedulerDecisions      map[string]*SchedulerDecision
 }
 
 type sessionRecord struct {
@@ -182,6 +305,13 @@ func newMemoryStore(allowSuperAdminCounting bool) Store {
 		tenantDomains:           make(map[string]*TenantDomain),
 		tenantMemberships:       make(map[string]map[string]*TenantMembership),
 		xworkmateProfiles:       make(map[string]*XWorkmateProfile),
+		trafficStatCheckpoints:  make(map[string]*TrafficStatCheckpoint),
+		trafficMinuteBuckets:    make(map[string]*TrafficMinuteBucket),
+		billingLedgerEntries:    make(map[string]*BillingLedgerEntry),
+		accountQuotaStates:      make(map[string]*AccountQuotaState),
+		accountPolicySnapshots:  make(map[string]*AccountPolicySnapshot),
+		nodeHealthSnapshots:     make(map[string]*NodeHealthSnapshot),
+		schedulerDecisions:      make(map[string]*SchedulerDecision),
 	}
 }
 

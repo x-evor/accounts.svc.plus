@@ -266,6 +266,10 @@ func TestAgentServerUsers_DefaultSyncIncludesSandboxAndRegularUsers(t *testing.T
 	}
 
 	// Ensure normal user is "expired" per proxy UUID expiry metadata.
+	sandbox, err := st.GetUserByEmail(ctx, "sandbox@svc.plus")
+	if err != nil {
+		t.Fatalf("get sandbox user: %v", err)
+	}
 	normal, err := st.GetUserByEmail(ctx, "user@example.com")
 	if err != nil {
 		t.Fatalf("get normal user: %v", err)
@@ -314,10 +318,10 @@ func TestAgentServerUsers_DefaultSyncIncludesSandboxAndRegularUsers(t *testing.T
 	seenSandbox := false
 	seenNormal := false
 	for _, c := range payload.Clients {
-		if c.Email == "sandbox@svc.plus" && strings.TrimSpace(c.ID) != "" {
+		if c.Email == sandbox.ID && strings.TrimSpace(c.ID) != "" {
 			seenSandbox = true
 		}
-		if c.Email == "user@example.com" && strings.TrimSpace(c.ID) != "" {
+		if c.Email == normal.ID && strings.TrimSpace(c.ID) != "" {
 			seenNormal = true
 		}
 	}

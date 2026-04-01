@@ -402,6 +402,8 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	internalGroup.Use(auth.InternalAuthMiddleware())
 	internalGroup.GET("/public-overview", h.internalPublicOverview)
 	internalGroup.GET("/sandbox/guest", h.internalSandboxGuest)
+	internalGroup.GET("/policy/:accountUUID", h.internalAccountPolicy)
+	internalGroup.POST("/nodes/heartbeat", h.internalNodeHeartbeat)
 
 	// Public /api routes for admin/management (expected by frontend at /api/admin/...)
 	apiGroup := r.Group("/api")
@@ -418,6 +420,12 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	agentServerGroup.GET("/nodes", h.listAgentNodes)
 	agentServerGroup.GET("/users", h.listAgentUsers)
 	agentServerGroup.POST("/status", h.reportAgentStatus)
+
+	accountGroup := r.Group("/api/account")
+	accountGroup.GET("/usage/summary", h.accountUsageSummary)
+	accountGroup.GET("/usage/buckets", h.accountUsageBuckets)
+	accountGroup.GET("/billing/summary", h.accountBillingSummary)
+	accountGroup.GET("/policy", h.accountPolicy)
 
 	// Legacy alias kept for backward compatibility.
 	agentGroup := r.Group("/api/agent")

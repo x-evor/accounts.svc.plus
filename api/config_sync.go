@@ -120,23 +120,23 @@ func (h *handler) respondSyncConfigSnapshot(c *gin.Context) {
 				"vless_uri":    vlessURI,
 			})
 			nodes = append(nodes, gin.H{
-				"id":              nodeID,
-				"name":            nodeName,
-				"display_name":    nodeName,
-				"remark":          nodeName,
-				"host":            host,
-				"protocol":        "vless",
-				"transport":       "xhttp",
-				"security":        "tls",
-				"address":         host,
-				"port":            443,
-				"server_name":     host,
-				"uuid":            proxyUUID,
-				"flow":            "",
-				"source":          "server",
-				"country_code":    countryCode,
-				"updated_at":      updatedAt,
-				"vless_uri":       vlessURI,
+				"id":               nodeID,
+				"name":             nodeName,
+				"display_name":     nodeName,
+				"remark":           nodeName,
+				"host":             host,
+				"protocol":         "vless",
+				"transport":        "xhttp",
+				"security":         "tls",
+				"address":          host,
+				"port":             443,
+				"server_name":      host,
+				"uuid":             proxyUUID,
+				"flow":             "",
+				"source":           "server",
+				"country_code":     countryCode,
+				"updated_at":       updatedAt,
+				"vless_uri":        vlessURI,
 				"uri_scheme_xhttp": vlessURI,
 			})
 		}
@@ -227,7 +227,7 @@ func (h *handler) renderUserXrayConfig(user *store.User) (string, string, []stri
 	}
 	clients := []xrayconfig.Client{{
 		ID:    clientID,
-		Email: strings.TrimSpace(user.Email),
+		Email: strings.TrimSpace(user.ID),
 		Flow:  xrayconfig.DefaultFlow,
 	}}
 

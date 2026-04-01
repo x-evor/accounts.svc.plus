@@ -9,6 +9,7 @@ import (
 
 	"account/internal/agentproto"
 	"account/internal/agentserver"
+	"account/internal/store"
 	"account/internal/xrayconfig"
 )
 
@@ -75,7 +76,7 @@ func (h *handler) listAgentUsers(c *gin.Context) {
 			if id != "" {
 				clients = append(clients, xrayconfig.Client{
 					ID:    id,
-					Email: strings.TrimSpace(sandboxUser.Email),
+					Email: strings.TrimSpace(sandboxUser.ID),
 					Flow:  xrayconfig.DefaultFlow,
 				})
 			}
@@ -91,7 +92,7 @@ func (h *handler) listAgentUsers(c *gin.Context) {
 		}
 		clients = append(clients, xrayconfig.Client{
 			ID:    id,
-			Email: strings.TrimSpace(u.Email),
+			Email: strings.TrimSpace(u.ID),
 			Flow:  xrayconfig.DefaultFlow,
 		})
 	}
@@ -143,6 +144,22 @@ func (h *handler) reportAgentStatus(c *gin.Context) {
 	// Ensure report uses the resolved agent id.
 	report.AgentID = identity.ID
 	h.agentRegistry.ReportStatus(identity, report)
+	if h.store != nil {
+		nodeID := strings.TrimSpace(report.Xray.NodeID)
+		if nodeID == "" {
+			nodeID = identity.ID
+		}
+		_ = h.store.UpsertNodeHealthSnapshot(c.Request.Context(), &store.NodeHealthSnapshot{
+			NodeID:       nodeID,
+			Region:       strings.TrimSpace(report.Xray.Region),
+			LineCode:     strings.TrimSpace(report.Xray.LineCode),
+			PricingGroup: strings.TrimSpace(report.Xray.PricingGroup),
+			StatsEnabled: report.Xray.StatsEnabled,
+			XrayRevision: strings.TrimSpace(report.Xray.XrayRevision),
+			Healthy:      report.Healthy,
+			SampledAt:    time.Now().UTC(),
+		})
+	}
 
 	c.Status(http.StatusNoContent)
 }
