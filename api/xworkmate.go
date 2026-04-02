@@ -178,7 +178,9 @@ func (h *handler) currentAuthenticatedUser(c *gin.Context) (*store.User, bool) {
 
 func (h *handler) ensureSharedTenantMembership(ctx context.Context, user *store.User) (string, error) {
 	role := store.TenantMembershipRoleUser
-	if h.isRootAccount(user) || strings.EqualFold(strings.TrimSpace(user.Role), store.RoleAdmin) {
+	if h.isRootAccount(user) ||
+		strings.EqualFold(strings.TrimSpace(user.Role), store.RoleAdmin) ||
+		strings.EqualFold(strings.TrimSpace(user.Role), store.RoleOperator) {
 		role = store.TenantMembershipRoleAdmin
 	}
 	return role, h.store.UpsertTenantMembership(ctx, &store.TenantMembership{
@@ -269,6 +271,25 @@ func buildXWorkmateTokenConfigured(profile *store.XWorkmateProfile) gin.H {
 	return result
 }
 
+func buildXWorkmateTokenConfiguredWithVaultStatus(profile *store.XWorkmateProfile, vaultStatus map[string]bool) gin.H {
+	result := buildXWorkmateTokenConfigured(profile)
+	if len(vaultStatus) == 0 {
+		return result
+	}
+
+	if configured, ok := vaultStatus[store.XWorkmateSecretLocatorTargetOpenclawGatewayToken]; ok {
+		result["openclaw"] = configured
+	}
+	if configured, ok := vaultStatus[store.XWorkmateSecretLocatorTargetVaultRootToken]; ok {
+		result["vault"] = configured
+	}
+	if configured, ok := vaultStatus[store.XWorkmateSecretLocatorTargetAIGatewayAccessToken]; ok {
+		result["apisix"] = configured
+	}
+
+	return result
+}
+
 func hasOpenclawXWorkmateSecretLocator(profile *store.XWorkmateProfile) bool {
 	if profile == nil {
 		return false
@@ -344,7 +365,7 @@ func (h *handler) buildSessionUser(ctx context.Context, host string, user *store
 	return payload, nil
 }
 
-func buildXWorkmateProfileResponse(access *xworkmateAccessContext, profile *store.XWorkmateProfile) gin.H {
+func buildXWorkmateProfileResponse(access *xworkmateAccessContext, profile *store.XWorkmateProfile, tokenConfigured gin.H) gin.H {
 	resolvedProfile := gin.H{
 		"openclawUrl":     "",
 		"openclawOrigin":  "",
@@ -378,8 +399,164 @@ func buildXWorkmateProfileResponse(access *xworkmateAccessContext, profile *stor
 		"canEditIntegrations": access.CanEditIntegrations,
 		"canManageTenant":     access.CanManageTenant,
 		"profile":             resolvedProfile,
-		"tokenConfigured":     buildXWorkmateTokenConfigured(profile),
+		"tokenConfigured":     tokenConfigured,
 	}
+}
+
+func resolvedXWorkmateProfileUserID(access *xworkmateAccessContext, user *store.User) string {
+	if access == nil {
+		return ""
+	}
+	if access.ProfileScope == store.XWorkmateProfileScopeTenantShared {
+		return ""
+	}
+	if user == nil {
+		return ""
+	}
+	return strings.TrimSpace(user.ID)
+}
+
+func (h *handler) loadXWorkmateProfile(ctx context.Context, access *xworkmateAccessContext, user *store.User) (*store.XWorkmateProfile, error) {
+	profileUserID := resolvedXWorkmateProfileUserID(access, user)
+	profile, err := h.store.GetXWorkmateProfile(ctx, access.Tenant.ID, profileUserID, access.ProfileScope)
+	if err == nil {
+		return profile, nil
+	}
+	if !errors.Is(err, store.ErrXWorkmateProfileNotFound) {
+		return nil, err
+	}
+	if access.ProfileScope != store.XWorkmateProfileScopeTenantShared {
+		return nil, nil
+	}
+
+	legacyProfile, legacyErr := h.store.GetXWorkmateProfile(ctx, access.Tenant.ID, strings.TrimSpace(user.ID), access.ProfileScope)
+	if legacyErr != nil {
+		if errors.Is(legacyErr, store.ErrXWorkmateProfileNotFound) {
+			return nil, nil
+		}
+		return nil, legacyErr
+	}
+	return legacyProfile, nil
+}
+
+func (h *handler) ensureXWorkmateVaultService(c *gin.Context) bool {
+	if h.xworkmateVaultService != nil {
+		return true
+	}
+	respondError(c, http.StatusServiceUnavailable, "xworkmate_vault_unavailable", "xworkmate vault integration is not configured")
+	return false
+}
+
+func findStoredXWorkmateSecretLocator(profile *store.XWorkmateProfile, target string) (store.XWorkmateSecretLocator, bool) {
+	if profile == nil {
+		return store.XWorkmateSecretLocator{}, false
+	}
+	normalizedTarget := strings.ToLower(strings.TrimSpace(target))
+	for _, locator := range profile.SecretLocators {
+		if locator.Target != normalizedTarget {
+			continue
+		}
+		if strings.TrimSpace(locator.SecretPath) == "" || strings.TrimSpace(locator.SecretKey) == "" {
+			continue
+		}
+		store.NormalizeXWorkmateSecretLocator(&locator)
+		return locator, true
+	}
+	return store.XWorkmateSecretLocator{}, false
+}
+
+func upsertXWorkmateSecretLocator(profile *store.XWorkmateProfile, locator store.XWorkmateSecretLocator) {
+	if profile == nil {
+		return
+	}
+	store.NormalizeXWorkmateSecretLocator(&locator)
+	for i := range profile.SecretLocators {
+		if profile.SecretLocators[i].Target != locator.Target {
+			continue
+		}
+		profile.SecretLocators[i].ID = locator.ID
+		profile.SecretLocators[i].Provider = locator.Provider
+		profile.SecretLocators[i].SecretPath = locator.SecretPath
+		profile.SecretLocators[i].SecretKey = locator.SecretKey
+		profile.SecretLocators[i].Required = locator.Required
+		store.NormalizeXWorkmateProfile(profile)
+		return
+	}
+	profile.SecretLocators = append(profile.SecretLocators, locator)
+	store.NormalizeXWorkmateProfile(profile)
+}
+
+func buildXWorkmateSecretStatusPayload(locator store.XWorkmateSecretLocator, configured bool) gin.H {
+	managedTarget, _ := findXWorkmateManagedTarget(locator.Target)
+	return gin.H{
+		"target":     locator.Target,
+		"configured": configured,
+		"state": func() string {
+			if configured {
+				return "configured"
+			}
+			return "missing"
+		}(),
+		"required": managedTarget.Required || locator.Required,
+		"locator": gin.H{
+			"id":         locator.ID,
+			"provider":   locator.Provider,
+			"secretPath": locator.SecretPath,
+			"secretKey":  locator.SecretKey,
+			"target":     locator.Target,
+			"required":   managedTarget.Required || locator.Required,
+		},
+	}
+}
+
+func (h *handler) describeXWorkmateSecrets(ctx context.Context, access *xworkmateAccessContext, user *store.User, profile *store.XWorkmateProfile) ([]gin.H, map[string]bool, error) {
+	profileUserID := resolvedXWorkmateProfileUserID(access, user)
+	secrets := make([]gin.H, 0, len(xworkmateManagedSecretTargets))
+	statusByTarget := make(map[string]bool, len(xworkmateManagedSecretTargets))
+
+	for _, managedTarget := range xworkmateManagedSecretTargets {
+		locator, ok := findStoredXWorkmateSecretLocator(profile, managedTarget.Target)
+		if !ok {
+			var err error
+			locator, err = buildManagedXWorkmateSecretLocator(access, profileUserID, managedTarget.Target)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+
+		configured := false
+		if h.xworkmateVaultService != nil {
+			var err error
+			configured, err = h.xworkmateVaultService.HasSecret(ctx, locator)
+			if err != nil {
+				return nil, nil, err
+			}
+		} else {
+			configured = statusByTargetFromMetadata(profile, managedTarget.Target)
+		}
+
+		statusByTarget[managedTarget.Target] = configured
+		secrets = append(secrets, buildXWorkmateSecretStatusPayload(locator, configured))
+	}
+
+	return secrets, statusByTarget, nil
+}
+
+func statusByTargetFromMetadata(profile *store.XWorkmateProfile, target string) bool {
+	if profile == nil {
+		return false
+	}
+	if target == store.XWorkmateSecretLocatorTargetOpenclawGatewayToken {
+		return hasOpenclawXWorkmateSecretLocator(profile)
+	}
+	for _, locator := range profile.SecretLocators {
+		if locator.Target == strings.ToLower(strings.TrimSpace(target)) &&
+			strings.TrimSpace(locator.SecretPath) != "" &&
+			strings.TrimSpace(locator.SecretKey) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func containsForbiddenXWorkmateTokenField(value any) bool {
@@ -423,26 +600,23 @@ func (h *handler) getXWorkmateProfile(c *gin.Context) {
 		return
 	}
 
-	profile, err := h.store.GetXWorkmateProfile(c.Request.Context(), access.Tenant.ID, user.ID, access.ProfileScope)
-	if err != nil && !errors.Is(err, store.ErrXWorkmateProfileNotFound) {
+	profile, err := h.loadXWorkmateProfile(c.Request.Context(), access, user)
+	if err != nil {
 		respondError(c, http.StatusInternalServerError, "xworkmate_profile_read_failed", "failed to load xworkmate profile")
 		return
 	}
-	if errors.Is(err, store.ErrXWorkmateProfileNotFound) {
-		profile = nil
-	}
-	if access.ProfileScope == store.XWorkmateProfileScopeTenantShared && profile == nil {
-		profile, err = h.store.GetXWorkmateProfile(c.Request.Context(), access.Tenant.ID, "", access.ProfileScope)
-		if err != nil && !errors.Is(err, store.ErrXWorkmateProfileNotFound) {
-			respondError(c, http.StatusInternalServerError, "xworkmate_profile_read_failed", "failed to load xworkmate profile")
+
+	tokenConfigured := buildXWorkmateTokenConfigured(profile)
+	if h.xworkmateVaultService != nil {
+		_, statusByTarget, err := h.describeXWorkmateSecrets(c.Request.Context(), access, user, profile)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "xworkmate_secret_read_failed", "failed to load xworkmate secret status")
 			return
 		}
-		if errors.Is(err, store.ErrXWorkmateProfileNotFound) {
-			profile = nil
-		}
+		tokenConfigured = buildXWorkmateTokenConfiguredWithVaultStatus(profile, statusByTarget)
 	}
 
-	c.JSON(http.StatusOK, buildXWorkmateProfileResponse(access, profile))
+	c.JSON(http.StatusOK, buildXWorkmateProfileResponse(access, profile, tokenConfigured))
 }
 
 func (h *handler) updateXWorkmateProfile(c *gin.Context) {
@@ -502,10 +676,7 @@ func (h *handler) updateXWorkmateProfile(c *gin.Context) {
 		return
 	}
 
-	profileUserID := user.ID
-	if access.ProfileScope == store.XWorkmateProfileScopeTenantShared {
-		profileUserID = ""
-	}
+	profileUserID := resolvedXWorkmateProfileUserID(access, user)
 
 	profile := &store.XWorkmateProfile{
 		TenantID:        access.Tenant.ID,
@@ -525,7 +696,227 @@ func (h *handler) updateXWorkmateProfile(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, buildXWorkmateProfileResponse(access, profile))
+	tokenConfigured := buildXWorkmateTokenConfigured(profile)
+	if h.xworkmateVaultService != nil {
+		_, statusByTarget, err := h.describeXWorkmateSecrets(c.Request.Context(), access, user, profile)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "xworkmate_secret_read_failed", "failed to load xworkmate secret status")
+			return
+		}
+		tokenConfigured = buildXWorkmateTokenConfiguredWithVaultStatus(profile, statusByTarget)
+	}
+
+	c.JSON(http.StatusOK, buildXWorkmateProfileResponse(access, profile, tokenConfigured))
+}
+
+func (h *handler) getXWorkmateSecrets(c *gin.Context) {
+	if !h.ensureXWorkmateVaultService(c) {
+		return
+	}
+
+	user, ok := h.currentAuthenticatedUser(c)
+	if !ok {
+		return
+	}
+
+	access, err := h.resolveXWorkmateAccess(c.Request.Context(), h.resolveTenantHost(c), user)
+	if err != nil {
+		if errors.Is(err, store.ErrTenantMembershipNotFound) {
+			respondError(c, http.StatusForbidden, "tenant_membership_required", "tenant membership is required")
+			return
+		}
+		if errors.Is(err, store.ErrTenantNotFound) {
+			respondError(c, http.StatusNotFound, "tenant_not_found", "tenant was not found")
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "xworkmate_context_failed", "failed to resolve xworkmate context")
+		return
+	}
+
+	profile, err := h.loadXWorkmateProfile(c.Request.Context(), access, user)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "xworkmate_profile_read_failed", "failed to load xworkmate profile")
+		return
+	}
+
+	secrets, statusByTarget, err := h.describeXWorkmateSecrets(c.Request.Context(), access, user, profile)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "xworkmate_secret_read_failed", "failed to load xworkmate secret status")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"edition":             access.Tenant.Edition,
+		"profileScope":        access.ProfileScope,
+		"membershipRole":      access.MembershipRole,
+		"canEditIntegrations": access.CanEditIntegrations,
+		"canManageTenant":     access.CanManageTenant,
+		"tenant":              gin.H{"id": access.Tenant.ID, "name": access.Tenant.Name, "domain": access.Domain},
+		"secrets":             secrets,
+		"tokenConfigured":     buildXWorkmateTokenConfiguredWithVaultStatus(profile, statusByTarget),
+		"vaultBackendEnabled": true,
+	})
+}
+
+func (h *handler) putXWorkmateSecret(c *gin.Context) {
+	if !h.ensureXWorkmateVaultService(c) {
+		return
+	}
+
+	user, ok := h.currentAuthenticatedUser(c)
+	if !ok {
+		return
+	}
+
+	access, err := h.resolveXWorkmateAccess(c.Request.Context(), h.resolveTenantHost(c), user)
+	if err != nil {
+		if errors.Is(err, store.ErrTenantMembershipNotFound) {
+			respondError(c, http.StatusForbidden, "tenant_membership_required", "tenant membership is required")
+			return
+		}
+		if errors.Is(err, store.ErrTenantNotFound) {
+			respondError(c, http.StatusNotFound, "tenant_not_found", "tenant was not found")
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "xworkmate_context_failed", "failed to resolve xworkmate context")
+		return
+	}
+	if !access.CanEditIntegrations {
+		respondError(c, http.StatusForbidden, "xworkmate_secret_forbidden", "you are not allowed to update integrations for this tenant")
+		return
+	}
+	if h.isReadOnlyAccount(user) {
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
+		return
+	}
+
+	target := strings.ToLower(strings.TrimSpace(c.Param("target")))
+	if _, ok := findXWorkmateManagedTarget(target); !ok {
+		respondError(c, http.StatusBadRequest, "xworkmate_secret_unknown_target", "unknown xworkmate secret target")
+		return
+	}
+
+	var payload struct {
+		Value string `json:"value"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		respondError(c, http.StatusBadRequest, "invalid_request", "invalid request payload")
+		return
+	}
+	if strings.TrimSpace(payload.Value) == "" {
+		respondError(c, http.StatusBadRequest, "xworkmate_secret_value_required", "secret value is required")
+		return
+	}
+
+	profile, err := h.loadXWorkmateProfile(c.Request.Context(), access, user)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "xworkmate_profile_read_failed", "failed to load xworkmate profile")
+		return
+	}
+	if profile == nil {
+		profile = &store.XWorkmateProfile{
+			TenantID: access.Tenant.ID,
+			UserID:   resolvedXWorkmateProfileUserID(access, user),
+			Scope:    access.ProfileScope,
+		}
+	}
+
+	locator, err := buildManagedXWorkmateSecretLocator(access, resolvedXWorkmateProfileUserID(access, user), target)
+	if err != nil {
+		respondError(c, http.StatusBadRequest, "xworkmate_secret_unknown_target", "unknown xworkmate secret target")
+		return
+	}
+	if err := h.xworkmateVaultService.WriteSecret(c.Request.Context(), locator, payload.Value); err != nil {
+		respondError(c, http.StatusInternalServerError, "xworkmate_secret_write_failed", "failed to persist xworkmate secret")
+		return
+	}
+
+	upsertXWorkmateSecretLocator(profile, locator)
+	if err := h.store.UpsertXWorkmateProfile(c.Request.Context(), profile); err != nil {
+		respondError(c, http.StatusInternalServerError, "xworkmate_profile_write_failed", "failed to save xworkmate profile")
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"secret":          buildXWorkmateSecretStatusPayload(locator, true),
+		"profileScope":    access.ProfileScope,
+		"tokenConfigured": buildXWorkmateTokenConfiguredWithVaultStatus(profile, map[string]bool{target: true}),
+	})
+}
+
+func (h *handler) deleteXWorkmateSecret(c *gin.Context) {
+	if !h.ensureXWorkmateVaultService(c) {
+		return
+	}
+
+	user, ok := h.currentAuthenticatedUser(c)
+	if !ok {
+		return
+	}
+
+	access, err := h.resolveXWorkmateAccess(c.Request.Context(), h.resolveTenantHost(c), user)
+	if err != nil {
+		if errors.Is(err, store.ErrTenantMembershipNotFound) {
+			respondError(c, http.StatusForbidden, "tenant_membership_required", "tenant membership is required")
+			return
+		}
+		if errors.Is(err, store.ErrTenantNotFound) {
+			respondError(c, http.StatusNotFound, "tenant_not_found", "tenant was not found")
+			return
+		}
+		respondError(c, http.StatusInternalServerError, "xworkmate_context_failed", "failed to resolve xworkmate context")
+		return
+	}
+	if !access.CanEditIntegrations {
+		respondError(c, http.StatusForbidden, "xworkmate_secret_forbidden", "you are not allowed to update integrations for this tenant")
+		return
+	}
+	if h.isReadOnlyAccount(user) {
+		respondError(c, http.StatusForbidden, "read_only_account", "demo account is read-only")
+		return
+	}
+
+	target := strings.ToLower(strings.TrimSpace(c.Param("target")))
+	if _, ok := findXWorkmateManagedTarget(target); !ok {
+		respondError(c, http.StatusBadRequest, "xworkmate_secret_unknown_target", "unknown xworkmate secret target")
+		return
+	}
+
+	profile, err := h.loadXWorkmateProfile(c.Request.Context(), access, user)
+	if err != nil {
+		respondError(c, http.StatusInternalServerError, "xworkmate_profile_read_failed", "failed to load xworkmate profile")
+		return
+	}
+
+	locator, ok := findStoredXWorkmateSecretLocator(profile, target)
+	if !ok {
+		locator, err = buildManagedXWorkmateSecretLocator(access, resolvedXWorkmateProfileUserID(access, user), target)
+		if err != nil {
+			respondError(c, http.StatusBadRequest, "xworkmate_secret_unknown_target", "unknown xworkmate secret target")
+			return
+		}
+	}
+
+	if err := h.xworkmateVaultService.DeleteSecret(c.Request.Context(), locator); err != nil {
+		respondError(c, http.StatusInternalServerError, "xworkmate_secret_delete_failed", "failed to delete xworkmate secret")
+		return
+	}
+
+	tokenConfigured := buildXWorkmateTokenConfigured(profile)
+	if h.xworkmateVaultService != nil {
+		_, statusByTarget, err := h.describeXWorkmateSecrets(c.Request.Context(), access, user, profile)
+		if err != nil {
+			respondError(c, http.StatusInternalServerError, "xworkmate_secret_read_failed", "failed to load xworkmate secret status")
+			return
+		}
+		tokenConfigured = buildXWorkmateTokenConfiguredWithVaultStatus(profile, statusByTarget)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"secret":          buildXWorkmateSecretStatusPayload(locator, false),
+		"profileScope":    access.ProfileScope,
+		"tokenConfigured": tokenConfigured,
+	})
 }
 
 func (h *handler) bootstrapTenant(c *gin.Context) {

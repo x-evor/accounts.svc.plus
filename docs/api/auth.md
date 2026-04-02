@@ -11,6 +11,14 @@
 - `Authorization: Bearer <session-token>` 或
 - Cookie `xc_session=<session-token>`
 
+## XWorkmate Vault 集成
+
+- `GET /api/auth/xworkmate/profile` 继续只返回非敏感配置、locator 元数据和 `tokenConfigured`
+- `PUT /api/auth/xworkmate/profile` 禁止持久化任何 raw token/password/api key 字段
+- `GET /api/auth/xworkmate/secrets` 只返回 target / locator / configured|missing 状态
+- `PUT /api/auth/xworkmate/secrets/:target` 与 `DELETE /api/auth/xworkmate/secrets/:target` 走服务端 Vault backend
+- 所有 XWorkmate secret API 都不会返回 raw secret
+
 ## 邮件验证
 
 - 发送验证码：`POST /api/auth/register/send`

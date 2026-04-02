@@ -17,6 +17,11 @@
 
 - `GET /api/auth/session`：获取当前会话用户
 - `DELETE /api/auth/session`：注销
+- `GET /api/auth/xworkmate/profile`：获取 XWorkmate 非敏感 profile / locator / tokenConfigured
+- `PUT /api/auth/xworkmate/profile`：更新 XWorkmate 非敏感 profile / locator
+- `GET /api/auth/xworkmate/secrets`：获取 XWorkmate Vault-backed secret 状态（不返回原文）
+- `PUT /api/auth/xworkmate/secrets/:target`：写入指定 XWorkmate secret 到 Vault（不返回原文）
+- `DELETE /api/auth/xworkmate/secrets/:target`：删除指定 XWorkmate secret，同时保留 locator 元数据
 - `POST /api/auth/mfa/totp/provision`：申请 MFA TOTP secret
 - `POST /api/auth/mfa/totp/verify`：验证 MFA TOTP
 - `POST /api/auth/mfa/disable`：关闭 MFA

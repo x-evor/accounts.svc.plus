@@ -80,6 +80,7 @@ type handler struct {
 	oauthProviders            map[string]auth.OAuthProvider
 	oauthFrontendURL          string
 	publicURL                 string
+	xworkmateVaultService     xworkmateVaultService
 	xrayConfigRenderer        func(*store.User) (string, string, []string, error)
 	agentRegistry             agentRegistry
 	db                        *gorm.DB
@@ -240,6 +241,14 @@ func WithOAuthFrontendURL(url string) Option {
 	}
 }
 
+// WithXWorkmateVaultService configures the Vault-backed secret service used by
+// xworkmate integration endpoints.
+func WithXWorkmateVaultService(vaultService xworkmateVaultService) Option {
+	return func(h *handler) {
+		h.xworkmateVaultService = vaultService
+	}
+}
+
 // WithAgentRegistry configures the handler with the provided agent registry.
 func WithAgentRegistry(registry agentRegistry) Option {
 	return func(h *handler) {
@@ -349,6 +358,9 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 	authProtected.DELETE("/session", h.deleteSession)
 	authProtected.GET("/xworkmate/profile", h.getXWorkmateProfile)
 	authProtected.PUT("/xworkmate/profile", h.updateXWorkmateProfile)
+	authProtected.GET("/xworkmate/secrets", h.getXWorkmateSecrets)
+	authProtected.PUT("/xworkmate/secrets/:target", h.putXWorkmateSecret)
+	authProtected.DELETE("/xworkmate/secrets/:target", h.deleteXWorkmateSecret)
 
 	authProtected.POST("/mfa/totp/provision", h.provisionTOTP)
 	authProtected.POST("/mfa/totp/verify", h.verifyTOTP)

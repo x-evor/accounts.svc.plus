@@ -907,6 +907,16 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		}()
 	}
 
+	xworkmateVaultService, err := api.NewXWorkmateVaultService(api.XWorkmateVaultConfig{
+		Address:   strings.TrimSpace(os.Getenv("XWORKMATE_VAULT_ADDR")),
+		Token:     strings.TrimSpace(os.Getenv("XWORKMATE_VAULT_TOKEN")),
+		Namespace: strings.TrimSpace(os.Getenv("XWORKMATE_VAULT_NAMESPACE")),
+		Mount:     strings.TrimSpace(os.Getenv("XWORKMATE_VAULT_MOUNT")),
+	})
+	if err != nil {
+		return err
+	}
+
 	options := []api.Option{
 		api.WithStore(st),
 		api.WithSessionTTL(cfg.Session.TTL),
@@ -921,6 +931,9 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 			AllowedPriceIDs: api.ParseStripeAllowedPriceIDs(os.Getenv("STRIPE_ALLOWED_PRICE_IDS")),
 			FrontendURL:     strings.TrimSpace(cfg.Auth.OAuth.FrontendURL),
 		}),
+	}
+	if xworkmateVaultService != nil {
+		options = append(options, api.WithXWorkmateVaultService(xworkmateVaultService))
 	}
 
 	if agentRegistry != nil {
