@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -26,14 +27,16 @@ type xworkmateAccessContext struct {
 }
 
 type xworkmateProfilePayload struct {
-	OpenclawURL     string                          `json:"openclawUrl"`
-	OpenclawOrigin  string                          `json:"openclawOrigin"`
-	VaultURL        string                          `json:"vaultUrl"`
-	VaultNamespace  string                          `json:"vaultNamespace"`
-	VaultSecretPath string                          `json:"vaultSecretPath"`
-	VaultSecretKey  string                          `json:"vaultSecretKey"`
-	SecretLocators  []xworkmateSecretLocatorPayload `json:"secretLocators"`
-	ApisixURL       string                          `json:"apisixUrl"`
+	OpenclawURL             string                                   `json:"openclawUrl"`
+	OpenclawOrigin          string                                   `json:"openclawOrigin"`
+	VaultURL                string                                   `json:"vaultUrl"`
+	VaultNamespace          string                                   `json:"vaultNamespace"`
+	VaultSecretPath         string                                   `json:"vaultSecretPath"`
+	VaultSecretKey          string                                   `json:"vaultSecretKey"`
+	SecretLocators          []xworkmateSecretLocatorPayload          `json:"secretLocators"`
+	ApisixURL               string                                   `json:"apisixUrl"`
+	BridgeServerURL         string                                   `json:"bridgeServerUrl"`
+	AcpBridgeServerProfiles []xworkmateAcpBridgeServerProfilePayload `json:"acpBridgeServerProfiles"`
 }
 
 type xworkmateSecretLocatorPayload struct {
@@ -43,6 +46,15 @@ type xworkmateSecretLocatorPayload struct {
 	SecretKey  string `json:"secretKey"`
 	Target     string `json:"target"`
 	Required   bool   `json:"required"`
+}
+
+type xworkmateAcpBridgeServerProfilePayload struct {
+	ProviderKey string `json:"providerKey"`
+	Label       string `json:"label"`
+	Badge       string `json:"badge"`
+	Endpoint    string `json:"endpoint"`
+	AuthRef     string `json:"authRef"`
+	Enabled     bool   `json:"enabled"`
 }
 
 var xworkmateForbiddenTokenFields = map[string]struct{}{
@@ -365,16 +377,80 @@ func (h *handler) buildSessionUser(ctx context.Context, host string, user *store
 	return payload, nil
 }
 
-func buildXWorkmateProfileResponse(access *xworkmateAccessContext, profile *store.XWorkmateProfile, tokenConfigured gin.H) gin.H {
+func envXWorkmateValue(key string) string {
+	return strings.TrimSpace(os.Getenv(key))
+}
+
+func buildSharedXWorkmateAcpBridgeServerProfiles() []gin.H {
+	profiles := make([]gin.H, 0, 2)
+
+	appendProfile := func(providerKey, label, badge, endpointEnv, authRefEnv string) {
+		endpoint := envXWorkmateValue(endpointEnv)
+		if endpoint == "" {
+			return
+		}
+		profiles = append(profiles, gin.H{
+			"providerKey": providerKey,
+			"label":       label,
+			"badge":       badge,
+			"endpoint":    endpoint,
+			"authRef":     envXWorkmateValue(authRefEnv),
+			"enabled":     true,
+		})
+	}
+
+	appendProfile("codex", "Codex", "Codex", "XWORKMATE_ACP_CODEX_URL", "XWORKMATE_ACP_CODEX_AUTH_REF")
+	appendProfile("opencode", "OpenCode", "OpenCode", "XWORKMATE_ACP_OPENCODE_URL", "XWORKMATE_ACP_OPENCODE_AUTH_REF")
+
+	return profiles
+}
+
+func buildResolvedXWorkmateProfile(access *xworkmateAccessContext, profile *store.XWorkmateProfile) (*store.XWorkmateProfile, string, []gin.H) {
+	var resolved store.XWorkmateProfile
+	if profile != nil {
+		resolved = *profile
+		resolved.SecretLocators = append([]store.XWorkmateSecretLocator{}, profile.SecretLocators...)
+	} else {
+		resolved = store.XWorkmateProfile{}
+	}
+
+	bridgeServerURL := ""
+	acpBridgeServerProfiles := []gin.H{}
+	if access != nil && access.ProfileScope == store.XWorkmateProfileScopeTenantShared {
+		if resolved.OpenclawURL == "" {
+			resolved.OpenclawURL = envXWorkmateValue("XWORKMATE_OPENCLAW_URL")
+		}
+		if resolved.OpenclawOrigin == "" {
+			resolved.OpenclawOrigin = envXWorkmateValue("XWORKMATE_OPENCLAW_ORIGIN")
+		}
+		if resolved.VaultURL == "" {
+			resolved.VaultURL = envXWorkmateValue("XWORKMATE_VAULT_ADDR")
+		}
+		if resolved.VaultNamespace == "" {
+			resolved.VaultNamespace = envXWorkmateValue("XWORKMATE_VAULT_NAMESPACE")
+		}
+		if resolved.ApisixURL == "" {
+			resolved.ApisixURL = envXWorkmateValue("XWORKMATE_APISIX_URL")
+		}
+		bridgeServerURL = envXWorkmateValue("XWORKMATE_BRIDGE_SERVER_URL")
+		acpBridgeServerProfiles = buildSharedXWorkmateAcpBridgeServerProfiles()
+	}
+
+	return &resolved, bridgeServerURL, acpBridgeServerProfiles
+}
+
+func buildXWorkmateProfileResponse(access *xworkmateAccessContext, profile *store.XWorkmateProfile, bridgeServerURL string, acpBridgeServerProfiles []gin.H, tokenConfigured gin.H) gin.H {
 	resolvedProfile := gin.H{
-		"openclawUrl":     "",
-		"openclawOrigin":  "",
-		"vaultUrl":        "",
-		"vaultNamespace":  "",
-		"vaultSecretPath": "",
-		"vaultSecretKey":  "",
-		"secretLocators":  []gin.H{},
-		"apisixUrl":       "",
+		"openclawUrl":             "",
+		"openclawOrigin":          "",
+		"vaultUrl":                "",
+		"vaultNamespace":          "",
+		"vaultSecretPath":         "",
+		"vaultSecretKey":          "",
+		"secretLocators":          []gin.H{},
+		"apisixUrl":               "",
+		"bridgeServerUrl":         bridgeServerURL,
+		"acpBridgeServerProfiles": acpBridgeServerProfiles,
 	}
 	if profile != nil {
 		resolvedProfile["openclawUrl"] = profile.OpenclawURL
@@ -615,8 +691,9 @@ func (h *handler) getXWorkmateProfile(c *gin.Context) {
 		}
 		tokenConfigured = buildXWorkmateTokenConfiguredWithVaultStatus(profile, statusByTarget)
 	}
+	resolvedProfile, bridgeServerURL, acpBridgeServerProfiles := buildResolvedXWorkmateProfile(access, profile)
 
-	c.JSON(http.StatusOK, buildXWorkmateProfileResponse(access, profile, tokenConfigured))
+	c.JSON(http.StatusOK, buildXWorkmateProfileResponse(access, resolvedProfile, bridgeServerURL, acpBridgeServerProfiles, tokenConfigured))
 }
 
 func (h *handler) updateXWorkmateProfile(c *gin.Context) {
@@ -705,8 +782,9 @@ func (h *handler) updateXWorkmateProfile(c *gin.Context) {
 		}
 		tokenConfigured = buildXWorkmateTokenConfiguredWithVaultStatus(profile, statusByTarget)
 	}
+	resolvedProfile, bridgeServerURL, acpBridgeServerProfiles := buildResolvedXWorkmateProfile(access, profile)
 
-	c.JSON(http.StatusOK, buildXWorkmateProfileResponse(access, profile, tokenConfigured))
+	c.JSON(http.StatusOK, buildXWorkmateProfileResponse(access, resolvedProfile, bridgeServerURL, acpBridgeServerProfiles, tokenConfigured))
 }
 
 func (h *handler) getXWorkmateSecrets(c *gin.Context) {

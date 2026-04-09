@@ -220,9 +220,11 @@ func TestUpdateAndGetXWorkmateProfileRoundTripsSecretLocators(t *testing.T) {
 				Target     string `json:"target"`
 				Required   bool   `json:"required"`
 			} `json:"secretLocators"`
-			VaultSecretPath string `json:"vaultSecretPath"`
-			VaultSecretKey  string `json:"vaultSecretKey"`
-			ApisixURL       string `json:"apisixUrl"`
+			VaultSecretPath         string           `json:"vaultSecretPath"`
+			VaultSecretKey          string           `json:"vaultSecretKey"`
+			ApisixURL               string           `json:"apisixUrl"`
+			BridgeServerURL         string           `json:"bridgeServerUrl"`
+			AcpBridgeServerProfiles []map[string]any `json:"acpBridgeServerProfiles"`
 		} `json:"profile"`
 		TokenConfigured struct {
 			Openclaw bool `json:"openclaw"`
@@ -257,6 +259,87 @@ func TestUpdateAndGetXWorkmateProfileRoundTripsSecretLocators(t *testing.T) {
 	}
 	if resp.TokenConfigured.Apisix {
 		t.Fatalf("expected apisix tokenConfigured=false without a token locator")
+	}
+	if resp.Profile.BridgeServerURL != "" {
+		t.Fatalf("expected bridge server url to remain empty without shared defaults, got %q", resp.Profile.BridgeServerURL)
+	}
+	if len(resp.Profile.AcpBridgeServerProfiles) != 0 {
+		t.Fatalf("expected no acp bridge profiles without shared defaults, got %#v", resp.Profile.AcpBridgeServerProfiles)
+	}
+}
+
+func TestGetXWorkmateProfileUsesTenantSharedEnvDefaults(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("XWORKMATE_OPENCLAW_URL", "wss://openclaw.svc.plus:443")
+	t.Setenv("XWORKMATE_OPENCLAW_ORIGIN", "https://openclaw.svc.plus")
+	t.Setenv("XWORKMATE_VAULT_ADDR", "https://vault.svc.plus")
+	t.Setenv("XWORKMATE_VAULT_NAMESPACE", "shared")
+	t.Setenv("XWORKMATE_APISIX_URL", "https://api.svc.plus/v1")
+	t.Setenv("XWORKMATE_BRIDGE_SERVER_URL", "https://xworkmate-bridge.svc.plus")
+	t.Setenv("XWORKMATE_ACP_CODEX_URL", "wss://acp-server.svc.plus/codex")
+	t.Setenv("XWORKMATE_ACP_CODEX_AUTH_REF", "")
+	t.Setenv("XWORKMATE_ACP_OPENCODE_URL", "wss://acp-server.svc.plus/opencode")
+	t.Setenv("XWORKMATE_ACP_OPENCODE_AUTH_REF", "")
+
+	router, _, token := newXWorkmateTestHarness(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/xworkmate/profile", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-Forwarded-Host", "console.svc.plus")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected shared profile fetch success, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		ProfileScope string `json:"profileScope"`
+		Profile      struct {
+			OpenclawURL             string `json:"openclawUrl"`
+			OpenclawOrigin          string `json:"openclawOrigin"`
+			VaultURL                string `json:"vaultUrl"`
+			VaultNamespace          string `json:"vaultNamespace"`
+			ApisixURL               string `json:"apisixUrl"`
+			BridgeServerURL         string `json:"bridgeServerUrl"`
+			AcpBridgeServerProfiles []struct {
+				ProviderKey string `json:"providerKey"`
+				Endpoint    string `json:"endpoint"`
+			} `json:"acpBridgeServerProfiles"`
+		} `json:"profile"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode shared profile response: %v", err)
+	}
+
+	if resp.ProfileScope != store.XWorkmateProfileScopeTenantShared {
+		t.Fatalf("expected tenant shared profile scope, got %q", resp.ProfileScope)
+	}
+	if resp.Profile.OpenclawURL != "wss://openclaw.svc.plus:443" {
+		t.Fatalf("expected shared openclaw url, got %q", resp.Profile.OpenclawURL)
+	}
+	if resp.Profile.OpenclawOrigin != "https://openclaw.svc.plus" {
+		t.Fatalf("expected shared openclaw origin, got %q", resp.Profile.OpenclawOrigin)
+	}
+	if resp.Profile.VaultURL != "https://vault.svc.plus" {
+		t.Fatalf("expected shared vault url, got %q", resp.Profile.VaultURL)
+	}
+	if resp.Profile.VaultNamespace != "shared" {
+		t.Fatalf("expected shared vault namespace, got %q", resp.Profile.VaultNamespace)
+	}
+	if resp.Profile.ApisixURL != "https://api.svc.plus/v1" {
+		t.Fatalf("expected shared apisix url, got %q", resp.Profile.ApisixURL)
+	}
+	if resp.Profile.BridgeServerURL != "https://xworkmate-bridge.svc.plus" {
+		t.Fatalf("expected shared bridge server url, got %q", resp.Profile.BridgeServerURL)
+	}
+	if len(resp.Profile.AcpBridgeServerProfiles) != 2 {
+		t.Fatalf("expected 2 shared acp bridge profiles, got %#v", resp.Profile.AcpBridgeServerProfiles)
+	}
+	if resp.Profile.AcpBridgeServerProfiles[0].ProviderKey != "codex" || resp.Profile.AcpBridgeServerProfiles[0].Endpoint != "wss://acp-server.svc.plus/codex" {
+		t.Fatalf("expected codex shared profile, got %#v", resp.Profile.AcpBridgeServerProfiles[0])
+	}
+	if resp.Profile.AcpBridgeServerProfiles[1].ProviderKey != "opencode" || resp.Profile.AcpBridgeServerProfiles[1].Endpoint != "wss://acp-server.svc.plus/opencode" {
+		t.Fatalf("expected opencode shared profile, got %#v", resp.Profile.AcpBridgeServerProfiles[1])
 	}
 }
 
