@@ -288,6 +288,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Check Out Playbooks Repository
+        # Pull latest playbooks HEAD from the default branch.
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: x-evor/playbooks
@@ -349,15 +350,28 @@ jobs:
             "${SSH_KNOWN_HOSTS}"
 
       - name: Run Accounts Deploy Playbook
+        working-directory: ${{ github.workspace }}/playbooks
         env:
           ACCOUNTS_IMAGE_REPO: ${{ needs.build.outputs.service_image_repo }}
           ACCOUNTS_IMAGE_TAG: ${{ steps.deploy_image_tag.outputs.value }}
           ACCOUNTS_PULL_IMAGE: "true"
         run: |
-          bash ./scripts/github-actions/deploy-accounts.sh \
-            "${{ needs.prep.outputs.target_host }}" \
-            "${{ needs.prep.outputs.run_apply }}" \
-            "${GITHUB_WORKSPACE}/playbooks"
+          set -euo pipefail
+
+          args=(
+            ansible-playbook
+            -i inventory.ini
+            deploy_accounts_svc_plus.yml
+            -l "${{ needs.prep.outputs.target_host }}"
+          )
+
+          if [[ "${{ needs.prep.outputs.run_apply }}" != "true" ]]; then
+            args+=(-C)
+          fi
+
+          ANSIBLE_CONFIG="${PWD}/ansible.cfg" \
+          ACCOUNTS_PULL_IMAGE="${ACCOUNTS_PULL_IMAGE:-true}" \
+          "${args[@]}"
 
       - name: Log In To Docker Hub
         if: needs.prep.outputs.run_base_images == 'true' && needs.build.outputs.base_images_pushed == 'true'
