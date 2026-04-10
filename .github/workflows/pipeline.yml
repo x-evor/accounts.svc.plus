@@ -1,0 +1,525 @@
+name: Pipeline
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_host:
+        description: Ansible inventory host or alias.
+        required: false
+        default: "jp-xhttp-contabo.svc.plus"
+        type: string
+      run_apply:
+        description: Apply deployment (false = dry-run).
+        required: true
+        default: true
+        type: boolean
+      image_tag:
+        description: Optional service image tag. Defaults to the current commit SHA.
+        required: false
+        default: ""
+        type: string
+      push_image:
+        description: Push the service image to GHCR.
+        required: true
+        default: true
+        type: boolean
+      push_latest:
+        description: Also publish the service image with the latest tag.
+        required: true
+        default: false
+        type: boolean
+      run_base_images:
+        description: Also run the base image workflow when base image sources exist.
+        required: true
+        default: false
+        type: boolean
+      push_base_images:
+        description: Push base images when the base image workflow runs.
+        required: true
+        default: true
+        type: boolean
+      base_image_registry:
+        description: Target registry for base images.
+        required: false
+        default: "ghcr.io"
+        type: string
+      base_image_org:
+        description: Target organization for base images.
+        required: false
+        default: "cloud-neutral-toolkit"
+        type: string
+      dockerhub_namespace:
+        description: Docker Hub namespace for base images.
+        required: false
+        default: "cloudneutral"
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  DEFAULT_TARGET_HOST: jp-xhttp-contabo.svc.plus
+
+jobs:
+  prep:
+    name: Prep
+    runs-on: ubuntu-latest
+    outputs:
+      base_images_exists: ${{ steps.flags.outputs.base_images_exists }}
+      run_base_images: ${{ steps.flags.outputs.run_base_images }}
+      push_base_images: ${{ steps.flags.outputs.push_base_images }}
+      base_image_registry: ${{ steps.flags.outputs.base_image_registry }}
+      base_image_org: ${{ steps.flags.outputs.base_image_org }}
+      dockerhub_namespace: ${{ steps.flags.outputs.dockerhub_namespace }}
+      target_host: ${{ steps.flags.outputs.target_host }}
+      run_apply: ${{ steps.flags.outputs.run_apply }}
+      image_tag: ${{ steps.flags.outputs.image_tag }}
+      push_image: ${{ steps.flags.outputs.push_image }}
+      push_latest: ${{ steps.flags.outputs.push_latest }}
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Resolve Pipeline Flags
+        id: flags
+        run: |
+          set -euo pipefail
+
+          base_images_exists=false
+          run_base_images=false
+          push_base_images=false
+          push_image=true
+          push_latest=false
+          image_tag=""
+          base_image_registry="ghcr.io"
+          base_image_org="${{ vars.IMAGE_REPO_OWNER || github.repository_owner }}"
+          dockerhub_namespace="${{ vars.DOCKERHUB_NAMESPACE || 'cloudneutral' }}"
+          target_host="${DEFAULT_TARGET_HOST}"
+          run_apply=true
+
+          if [[ -d deploy/base-images ]] && find deploy/base-images -type f | grep -q .; then
+            base_images_exists=true
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            target_host="${{ inputs.target_host }}"
+            [[ "${{ inputs.run_apply }}" == "true" ]] && run_apply=true || run_apply=false
+            image_tag="${{ inputs.image_tag }}"
+            [[ "${{ inputs.push_image }}" == "true" ]] && push_image=true || push_image=false
+            [[ "${{ inputs.push_latest }}" == "true" ]] && push_latest=true || push_latest=false
+            [[ "${{ inputs.run_base_images }}" == "true" ]] && run_base_images=true || run_base_images=false
+            [[ "${{ inputs.push_base_images }}" == "true" ]] && push_base_images=true || push_base_images=false
+            base_image_registry="${{ inputs.base_image_registry }}"
+            base_image_org="${{ inputs.base_image_org }}"
+            dockerhub_namespace="${{ inputs.dockerhub_namespace }}"
+            if [[ "${base_images_exists}" != "true" ]]; then
+              run_base_images=false
+              push_base_images=false
+            fi
+          else
+            if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+              push_image=false
+            fi
+
+            if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+              push_latest=true
+            fi
+
+            if [[ "${base_images_exists}" == "true" ]]; then
+              if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+                base_ref="${{ github.event.pull_request.base.sha }}"
+                head_ref="${{ github.event.pull_request.head.sha }}"
+              else
+                base_ref="${{ github.event.before }}"
+                head_ref="${{ github.sha }}"
+              fi
+
+              if [[ -n "${base_ref}" && "${base_ref}" != "0000000000000000000000000000000000000000" ]]; then
+                if git diff --name-only "${base_ref}" "${head_ref}" | grep -q '^deploy/base-images/'; then
+                  run_base_images=true
+                  if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+                    push_base_images=true
+                  fi
+                fi
+              fi
+            fi
+          fi
+
+          {
+            echo "base_images_exists=${base_images_exists}"
+            echo "run_base_images=${run_base_images}"
+            echo "push_base_images=${push_base_images}"
+            echo "base_image_registry=${base_image_registry}"
+            echo "base_image_org=${base_image_org}"
+            echo "dockerhub_namespace=${dockerhub_namespace}"
+            echo "target_host=${target_host}"
+            echo "run_apply=${run_apply}"
+            echo "image_tag=${image_tag}"
+            echo "push_image=${push_image}"
+            echo "push_latest=${push_latest}"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build
+    needs: prep
+    runs-on: ubuntu-latest
+    env:
+      BASE_REGISTRY: ${{ needs.prep.outputs.base_image_registry }}
+      BASE_ORG: ${{ needs.prep.outputs.base_image_org }}
+      PUSH_BASE_IMAGES: ${{ needs.prep.outputs.push_base_images }}
+      DOCKERHUB_NAMESPACE: ${{ needs.prep.outputs.dockerhub_namespace }}
+      SERVICE_REGISTRY: ghcr.io
+      SERVICE_IMAGE_REPO_OWNER: ${{ vars.IMAGE_REPO_OWNER || github.repository_owner }}
+      SERVICE_IMAGE_NAME: accounts
+    outputs:
+      artifact_name: ${{ steps.service_artifact.outputs.name }}
+      service_image_repo: ${{ steps.service_image.outputs.repo }}
+      base_images_pushed: ${{ needs.prep.outputs.push_base_images }}
+      openresty_tag: ${{ steps.openresty_preferred.outputs.tag }}
+      postgres_tag: ${{ steps.postgres_preferred.outputs.tag }}
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set Up QEMU
+        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # v3.6.0
+
+      - name: Set Up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Log In To Base Image Registry
+        if: needs.prep.outputs.run_base_images == 'true' && env.PUSH_BASE_IMAGES == 'true'
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ${{ env.BASE_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate OpenResty Tags
+        if: needs.prep.outputs.run_base_images == 'true'
+        id: openresty_meta
+        uses: ./.github/actions/auto-tag
+        with:
+          image: ${{ env.BASE_REGISTRY }}/${{ env.BASE_ORG }}/openresty-geoip
+
+      - name: Resolve OpenResty Preferred Tag
+        if: needs.prep.outputs.run_base_images == 'true'
+        id: openresty_preferred
+        run: |
+          set -euo pipefail
+          tag="$(bash .github/scripts/utils/preferred-tag.sh "${{ steps.openresty_meta.outputs.tags }}")"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Build OpenResty Base Image
+        if: needs.prep.outputs.run_base_images == 'true'
+        id: openresty_build
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: deploy/base-images/openresty-geoip.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUSH_BASE_IMAGES == 'true' }}
+          tags: ${{ steps.openresty_meta.outputs.tags }}
+          labels: ${{ steps.openresty_meta.outputs.labels }}
+
+      - name: Generate Postgres Tags
+        if: needs.prep.outputs.run_base_images == 'true'
+        id: postgres_meta
+        uses: ./.github/actions/auto-tag
+        with:
+          image: ${{ env.BASE_REGISTRY }}/${{ env.BASE_ORG }}/postgres-runtime
+
+      - name: Resolve Postgres Preferred Tag
+        if: needs.prep.outputs.run_base_images == 'true'
+        id: postgres_preferred
+        run: |
+          set -euo pipefail
+          tag="$(bash .github/scripts/utils/preferred-tag.sh "${{ steps.postgres_meta.outputs.tags }}")"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Postgres Base Image
+        if: needs.prep.outputs.run_base_images == 'true'
+        id: postgres_build
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: deploy/base-images/postgres-runtime-wth-extensions.Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUSH_BASE_IMAGES == 'true' }}
+          tags: ${{ steps.postgres_meta.outputs.tags }}
+          labels: ${{ steps.postgres_meta.outputs.labels }}
+
+      - name: Resolve Service Image Repository
+        id: service_image
+        run: echo "repo=${SERVICE_REGISTRY}/${SERVICE_IMAGE_REPO_OWNER}/${SERVICE_IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Compute Service Image Tags
+        id: service_meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        with:
+          images: ${{ steps.service_image.outputs.repo }}
+          tags: |
+            type=raw,value=${{ needs.prep.outputs.image_tag }},enable=${{ needs.prep.outputs.image_tag != '' }}
+            type=sha,format=short,enable=${{ needs.prep.outputs.image_tag == '' }}
+            type=raw,value=latest,enable=${{ needs.prep.outputs.push_latest == 'true' || github.ref == 'refs/heads/main' }}
+
+      - name: Build Service Image Artifact
+        uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: ${{ steps.service_meta.outputs.tags }}
+          labels: ${{ steps.service_meta.outputs.labels }}
+          outputs: type=docker,dest=${{ runner.temp }}/accounts-image.tar
+
+      - name: Prepare Service Artifact Bundle
+        id: service_artifact
+        run: |
+          set -euo pipefail
+          bundle_dir="${RUNNER_TEMP}/service-image-artifact"
+          mkdir -p "${bundle_dir}"
+          cp "${RUNNER_TEMP}/accounts-image.tar" "${bundle_dir}/accounts-image.tar"
+          printf '%s\n' "${{ steps.service_meta.outputs.tags }}" > "${bundle_dir}/tags.txt"
+          echo "name=accounts-image-artifact" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Service Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.service_artifact.outputs.name }}
+          path: ${{ runner.temp }}/service-image-artifact
+
+  deploy:
+    name: Deploy
+    needs:
+      - prep
+      - build
+    if: ${{ needs.prep.outputs.push_image == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ needs.build.outputs.service_image_repo }}
+      preferred_tag: ${{ steps.push.outputs.preferred_tag }}
+      run_apply: ${{ needs.prep.outputs.run_apply }}
+      pushed: "true"
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Check Out Playbooks Repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: x-evor/playbooks
+          token: ${{ secrets.WORKSPACE_REPO_TOKEN || github.token }}
+          path: playbooks
+
+      - name: Download Service Artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: ${{ needs.build.outputs.artifact_name }}
+          path: ${{ runner.temp }}/service-image-artifact
+
+      - name: Log In To GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ vars.GHCR_USERNAME || github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN || github.token }}
+
+      - name: Load And Push Service Image
+        id: push
+        run: |
+          set -euo pipefail
+
+          docker load -i "${RUNNER_TEMP}/service-image-artifact/accounts-image.tar"
+
+          preferred_tag="$(bash .github/scripts/utils/preferred-tag.sh "$(cat "${RUNNER_TEMP}/service-image-artifact/tags.txt")")"
+          while IFS= read -r tag; do
+            [[ -z "${tag}" ]] && continue
+            docker push "${tag}"
+          done < "${RUNNER_TEMP}/service-image-artifact/tags.txt"
+
+          echo "preferred_tag=${preferred_tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Deploy Image Tag
+        id: deploy_image_tag
+        run: |
+          set -euo pipefail
+          tag="${{ steps.push.outputs.preferred_tag }}"
+          echo "value=${tag##*:}" >> "$GITHUB_OUTPUT"
+
+      - name: Set Up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Install Ansible Runtime
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "ansible-core==2.18.3"
+
+      - name: Prepare Runner SSH Access
+        env:
+          SINGLE_NODE_VPS_SSH_PRIVATE_KEY: ${{ secrets.SINGLE_NODE_VPS_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          bash ./scripts/github-actions/prepare-ssh.sh \
+            "${{ needs.prep.outputs.target_host }}" \
+            "${SSH_KNOWN_HOSTS}"
+
+      - name: Run Accounts Deploy Playbook
+        env:
+          ACCOUNTS_IMAGE_REPO: ${{ needs.build.outputs.service_image_repo }}
+          ACCOUNTS_IMAGE_TAG: ${{ steps.deploy_image_tag.outputs.value }}
+          ACCOUNTS_PULL_IMAGE: "true"
+        run: |
+          bash ./scripts/github-actions/deploy-accounts.sh \
+            "${{ needs.prep.outputs.target_host }}" \
+            "${{ needs.prep.outputs.run_apply }}" \
+            "${GITHUB_WORKSPACE}/playbooks"
+
+      - name: Log In To Docker Hub
+        if: needs.prep.outputs.run_base_images == 'true' && needs.build.outputs.base_images_pushed == 'true'
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push Base Images To Docker Hub
+        if: needs.prep.outputs.run_base_images == 'true' && needs.build.outputs.base_images_pushed == 'true'
+        env:
+          BASE_REGISTRY: ${{ needs.prep.outputs.base_image_registry }}
+          BASE_ORG: ${{ needs.prep.outputs.base_image_org }}
+          DOCKERHUB_NAMESPACE: ${{ needs.prep.outputs.dockerhub_namespace }}
+          OPENRESTY_TAG: ${{ needs.build.outputs.openresty_tag }}
+          POSTGRES_TAG: ${{ needs.build.outputs.postgres_tag }}
+        run: |
+          set -euo pipefail
+
+          docker pull "${OPENRESTY_TAG}"
+          docker tag "${OPENRESTY_TAG}" "docker.io/${DOCKERHUB_NAMESPACE}/openresty-geoip:latest"
+          docker push "docker.io/${DOCKERHUB_NAMESPACE}/openresty-geoip:latest"
+
+          docker pull "${POSTGRES_TAG}"
+          docker tag "${POSTGRES_TAG}" "docker.io/${DOCKERHUB_NAMESPACE}/postgres-runtime:latest"
+          docker push "docker.io/${DOCKERHUB_NAMESPACE}/postgres-runtime:latest"
+
+  validate:
+    name: Validate
+    needs:
+      - prep
+      - build
+      - deploy
+    if: ${{ always() && needs.deploy.result == 'success' && needs.deploy.outputs.pushed == 'true' && needs.deploy.outputs.run_apply == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out Repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Validate Deployed Endpoint
+        run: bash ./scripts/github-actions/validate-deploy.sh https://accounts.svc.plus
+
+      - name: Generate Service SBOM
+        uses: anchore/sbom-action@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
+        with:
+          image: ${{ needs.deploy.outputs.preferred_tag }}
+          output-file: sbom-accounts.spdx.json
+
+      - name: Upload Service SBOM
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-accounts
+          path: sbom-accounts.spdx.json
+
+      - name: Scan Service Image
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ needs.deploy.outputs.preferred_tag }}
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@2e2f661cd4be3a4b891a882064e49d0fed4b7b88 # v3.9.0
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Sign Service Image
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign sign --yes "${{ needs.deploy.outputs.preferred_tag }}"
+
+      - name: Generate OpenResty SBOM
+        if: needs.prep.outputs.run_base_images == 'true' && needs.build.outputs.base_images_pushed == 'true'
+        uses: anchore/sbom-action@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
+        with:
+          image: ${{ needs.build.outputs.openresty_tag }}
+          output-file: sbom-openresty-geoip.spdx.json
+
+      - name: Upload OpenResty SBOM
+        if: needs.prep.outputs.run_base_images == 'true' && needs.build.outputs.base_images_pushed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-openresty-geoip
+          path: sbom-openresty-geoip.spdx.json
+
+      - name: Scan OpenResty Image
+        if: needs.prep.outputs.run_base_images == 'true' && needs.build.outputs.base_images_pushed == 'true'
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ needs.build.outputs.openresty_tag }}
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: Sign OpenResty Image
+        if: needs.prep.outputs.run_base_images == 'true' && needs.build.outputs.base_images_pushed == 'true'
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign sign --yes "${{ needs.build.outputs.openresty_tag }}"
+
+      - name: Generate Postgres SBOM
+        if: needs.prep.outputs.run_base_images == 'true' && needs.build.outputs.base_images_pushed == 'true'
+        uses: anchore/sbom-action@f325610c9f50a54015d37c8d16cb3b0e2c8f4de0 # v0.18.0
+        with:
+          image: ${{ needs.build.outputs.postgres_tag }}
+          output-file: sbom-postgres-runtime.spdx.json
+
+      - name: Upload Postgres SBOM
+        if: needs.prep.outputs.run_base_images == 'true' && needs.build.outputs.base_images_pushed == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-postgres-runtime
+          path: sbom-postgres-runtime.spdx.json
+
+      - name: Scan Postgres Image
+        if: needs.prep.outputs.run_base_images == 'true' && needs.build.outputs.base_images_pushed == 'true'
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: ${{ needs.build.outputs.postgres_tag }}
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: Sign Postgres Image
+        if: needs.prep.outputs.run_base_images == 'true' && needs.build.outputs.base_images_pushed == 'true'
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: |
+          cosign sign --yes "${{ needs.build.outputs.postgres_tag }}"
