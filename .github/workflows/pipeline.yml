@@ -355,6 +355,13 @@ jobs:
       - name: Check Out Repository
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
+      - name: Log In To GHCR
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ vars.GHCR_USERNAME || github.repository_owner }}
+          password: ${{ secrets.GHCR_TOKEN || github.token }}
+
       - name: Validate Deployed Endpoint
         run: bash ./scripts/github-actions/validate-deploy.sh https://accounts.svc.plus
 
