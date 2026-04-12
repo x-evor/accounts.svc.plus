@@ -161,17 +161,19 @@ jobs:
 
           image_ref="${{ needs.build.outputs.service_image_ref }}"
           image_no_digest="${image_ref%@*}"
-          image_repo="${image_no_digest%:*}"
           image_tag="${image_no_digest##*:}"
 
-          if [[ -z "${image_ref}" || -z "${image_repo}" || -z "${image_tag}" || "${image_repo}" == "${image_tag}" ]]; then
+          if [[ -z "${image_ref}" || -z "${image_tag}" ]]; then
             echo "invalid deploy image artifact: ${image_ref}" >&2
             exit 1
           fi
 
+          if [[ ! "${image_tag}" =~ ^sha-([0-9a-f]{40})$ && ! "${image_tag}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "deploy image artifact must be a full-SHA tag: ${image_ref}" >&2
+            exit 1
+          fi
+
           echo "image_ref=${image_ref}" >> "$GITHUB_OUTPUT"
-          echo "image_repo=${image_repo}" >> "$GITHUB_OUTPUT"
-          echo "image_tag=${image_tag}" >> "$GITHUB_OUTPUT"
 
       - name: Check Out Playbooks Repository
         # Pull latest playbooks HEAD from the default branch.
