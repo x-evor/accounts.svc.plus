@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -43,6 +44,13 @@ const defaultBridgeBootstrapTTL = 5 * time.Minute
 const defaultBridgeBootstrapTarget = "https://xworkmate-bridge.svc.plus"
 
 const sessionCookieName = "xc_session"
+
+type imageVersionInfo struct {
+	ImageRef string `json:"image_ref"`
+	Tag      string `json:"tag,omitempty"`
+	Commit   string `json:"commit,omitempty"`
+	Version  string `json:"version,omitempty"`
+}
 
 type session struct {
 	userID    string
@@ -324,6 +332,17 @@ func RegisterRoutes(r *gin.Engine, opts ...Option) {
 
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	r.GET("/api/ping", func(c *gin.Context) {
+		info := parseImageVersionInfo(os.Getenv("IMAGE"))
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "ok",
+			"image":   info.ImageRef,
+			"tag":     info.Tag,
+			"commit":  info.Commit,
+			"version": info.Version,
+		})
 	})
 
 	authGroup := r.Group("/api/auth")
@@ -3037,6 +3056,52 @@ func (h *handler) isRootAccount(user *store.User) bool {
 		return false
 	}
 	return store.IsRootRole(user.Role) && strings.EqualFold(strings.TrimSpace(user.Email), store.RootAdminEmail)
+}
+
+func parseImageVersionInfo(imageRef string) imageVersionInfo {
+	ref := strings.TrimSpace(imageRef)
+	info := imageVersionInfo{ImageRef: ref}
+	if ref == "" {
+		return info
+	}
+
+	if idx := strings.LastIndex(ref, "@"); idx >= 0 {
+		ref = ref[:idx]
+	}
+
+	tag := ref
+	if idx := strings.LastIndex(tag, ":"); idx >= 0 && idx > strings.LastIndex(tag, "/") {
+		tag = tag[idx+1:]
+	}
+	tag = strings.TrimSpace(tag)
+	info.Tag = tag
+
+	switch {
+	case isHexCommit(tag):
+		info.Commit = tag
+		info.Version = tag
+	case strings.HasPrefix(tag, "v") && len(tag) > 1:
+		info.Version = tag
+	default:
+		info.Version = tag
+	}
+
+	return info
+}
+
+func isHexCommit(value string) bool {
+	if len(value) < 7 || len(value) > 40 {
+		return false
+	}
+	for _, r := range value {
+		switch {
+		case r >= '0' && r <= '9':
+		case r >= 'a' && r <= 'f':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func respondError(c *gin.Context, status int, code, message string) {

@@ -76,7 +76,7 @@ func (h *handler) listAgentUsers(c *gin.Context) {
 			if id != "" {
 				clients = append(clients, xrayconfig.Client{
 					ID:    id,
-					Email: strings.TrimSpace(sandboxUser.ID),
+					Email: strings.ToLower(strings.TrimSpace(sandboxUser.Email)),
 					Flow:  xrayconfig.DefaultFlow,
 				})
 			}
@@ -92,7 +92,7 @@ func (h *handler) listAgentUsers(c *gin.Context) {
 		}
 		clients = append(clients, xrayconfig.Client{
 			ID:    id,
-			Email: strings.TrimSpace(u.ID),
+			Email: strings.ToLower(strings.TrimSpace(u.Email)),
 			Flow:  xrayconfig.DefaultFlow,
 		})
 	}

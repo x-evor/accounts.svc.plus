@@ -318,10 +318,10 @@ func TestAgentServerUsers_DefaultSyncIncludesSandboxAndRegularUsers(t *testing.T
 	seenSandbox := false
 	seenNormal := false
 	for _, c := range payload.Clients {
-		if c.Email == sandbox.ID && strings.TrimSpace(c.ID) != "" {
+		if c.Email == strings.ToLower(strings.TrimSpace(sandbox.Email)) && strings.TrimSpace(c.ID) != "" {
 			seenSandbox = true
 		}
-		if c.Email == normal.ID && strings.TrimSpace(c.ID) != "" {
+		if c.Email == strings.ToLower(strings.TrimSpace(normal.Email)) && strings.TrimSpace(c.ID) != "" {
 			seenNormal = true
 		}
 	}
@@ -1491,6 +1491,39 @@ func TestHealthzEndpoint(t *testing.T) {
 	}
 	if status := resp["status"]; status != "ok" {
 		t.Fatalf("expected health status 'ok', got %q", status)
+	}
+}
+
+func TestPingEndpointDerivesVersionFromImageEnv(t *testing.T) {
+	t.Setenv("IMAGE", "ghcr.io/example/accounts:abcdef1234567890abcdef1234567890abcdef12")
+	gin.SetMode(gin.TestMode)
+
+	router := gin.New()
+	RegisterRoutes(router)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ping", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected ping endpoint to return 200, got %d", rr.Code)
+	}
+
+	var resp map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode ping response: %v", err)
+	}
+	if got := resp["image"]; got != "ghcr.io/example/accounts:abcdef1234567890abcdef1234567890abcdef12" {
+		t.Fatalf("expected image ref from env, got %q", got)
+	}
+	if got := resp["tag"]; got != "abcdef1234567890abcdef1234567890abcdef12" {
+		t.Fatalf("expected tag derived from image ref, got %q", got)
+	}
+	if got := resp["commit"]; got != "abcdef1234567890abcdef1234567890abcdef12" {
+		t.Fatalf("expected commit derived from image ref, got %q", got)
+	}
+	if got := resp["version"]; got != "abcdef1234567890abcdef1234567890abcdef12" {
+		t.Fatalf("expected version derived from image ref, got %q", got)
 	}
 }
 
