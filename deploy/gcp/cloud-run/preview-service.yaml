@@ -27,6 +27,8 @@ spec:
         env:
         - name: CONFIG_TEMPLATE
           value: "/app/config/account.cloudrun.yaml"
+        - name: IMAGE
+          value: "asia-northeast1-docker.pkg.dev/xzerolab-480008/cloud-run-source-deploy/accounts.svc.plus/preview-accounts-svc-plus:latest"
         - name: PGADMIN_PASSWORD
           value: admin_password
         - name: DB_PASSWORD
