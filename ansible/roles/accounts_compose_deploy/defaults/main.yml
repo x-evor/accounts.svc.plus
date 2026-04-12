@@ -5,6 +5,7 @@ service_compose_container_port: 8080
 service_compose_git_short_commit: "{{ lookup('ansible.builtin.env', 'GIT_SHORT_COMMIT') | default('manual', true) }}"
 service_compose_env_common:
   CONFIG_TEMPLATE: /app/config/account.cloudrun.yaml
+  IMAGE: "{{ service_compose_image }}"
 service_compose_deploy_targets:
   - name: prod
     deploy_subdomain_prefix: accounts
@@ -18,4 +19,3 @@ service_compose_deploy_targets:
       - accounts-preview.svc.plus
     host_port: 18081
     env: {}
-

@@ -20,7 +20,6 @@ fi
 if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
   TARGET_HOST="${INPUT_TARGET_HOST:-${TARGET_HOST}}"
   [[ "${INPUT_RUN_APPLY:-true}" == "true" ]] && RUN_APPLY=true || RUN_APPLY=false
-  IMAGE_TAG="${INPUT_IMAGE_TAG:-}"
   [[ "${INPUT_PUSH_IMAGE:-true}" == "true" ]] && PUSH_IMAGE=true || PUSH_IMAGE=false
   [[ "${INPUT_PUSH_LATEST:-false}" == "true" ]] && PUSH_LATEST=true || PUSH_LATEST=false
   [[ "${INPUT_RUN_BASE_IMAGES:-false}" == "true" ]] && RUN_BASE_IMAGES=true || RUN_BASE_IMAGES=false

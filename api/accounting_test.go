@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 	"account/internal/store"
 )
 
-func TestAgentUsersUseAccountUUIDAsStatsEmail(t *testing.T) {
+func TestAgentUsersUseAccountEmailAsStatsEmail(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	st := store.NewMemoryStore()
@@ -74,12 +75,12 @@ func TestAgentUsersUseAccountUUIDAsStatsEmail(t *testing.T) {
 	}
 
 	for _, client := range payload.Clients {
-		if client.Email == user.ID {
+		if client.Email == strings.ToLower(strings.TrimSpace(user.Email)) {
 			return
 		}
 	}
 
-	t.Fatalf("expected stats email %q in payload, got %#v", user.ID, payload.Clients)
+	t.Fatalf("expected stats email %q in payload, got %#v", user.Email, payload.Clients)
 }
 
 func TestAccountUsageAndPolicyEndpoints(t *testing.T) {
