@@ -195,6 +195,15 @@ jobs:
             exit 1
           fi
 
+      - name: Guard Release Traceability Contract
+        working-directory: ${{ github.workspace }}/playbooks
+        run: |
+          set -euo pipefail
+
+          rg -n 'ACCOUNTS_IMAGE_REF' deploy_accounts_svc_plus.yml roles/vhosts/accounts_service >/dev/null
+          rg -n 'IMAGE=\{\{ accounts_service_image_ref \}\}|IMAGE: "\{\{ accounts_service_image_ref \}\}"' \
+            roles/vhosts/accounts_service >/dev/null
+
       - name: Set Up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.0.0
         with:
@@ -218,8 +227,6 @@ jobs:
         working-directory: ${{ github.workspace }}/playbooks
         env:
           ACCOUNTS_IMAGE_REF: ${{ steps.deploy_image.outputs.image_ref }}
-          ACCOUNTS_IMAGE_REPO: ${{ steps.deploy_image.outputs.image_repo }}
-          ACCOUNTS_IMAGE_TAG: ${{ steps.deploy_image.outputs.image_tag }}
           ACCOUNTS_PULL_IMAGE: "true"
         run: |
           set -euo pipefail
