@@ -193,7 +193,7 @@ jobs:
             -e 'podman build' \
             -e 'docker buildx build' \
             -e 'gcloud builds submit' \
-            ansible/playbooks/deploy_accounts_compose.yml ansible/roles/accounts_compose_deploy \
+            deploy_accounts_svc_plus.yml roles/vhosts/accounts_service \
             ; then
             echo "deploy flow must use the build job image artifact and must not build images on the target host" >&2
             exit 1
@@ -204,9 +204,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          grep -REn 'service_compose_image: REPLACE_IMAGE' ansible/roles/accounts_compose_deploy/defaults/main.yml >/dev/null
-          grep -REn 'IMAGE: "\{\{ service_compose_image \}\}"' \
-            ansible/roles/accounts_compose_deploy/defaults/main.yml >/dev/null
+          grep -REn "lookup\\('ansible.builtin.env', 'ACCOUNTS_IMAGE_REF'\\)" \
+            deploy_accounts_svc_plus.yml >/dev/null
+          grep -REn 'image: "\{\{ accounts_service_image_ref \}\}"' \
+            roles/vhosts/accounts_service/templates/docker-compose.yml.j2 >/dev/null
+          grep -REn 'IMAGE: "\{\{ accounts_service_image_ref \}\}"' \
+            roles/vhosts/accounts_service/templates/docker-compose.yml.j2 >/dev/null
+          grep -REn '^IMAGE=\{\{ accounts_service_image_ref \}\}$' \
+            roles/vhosts/accounts_service/templates/app.env.j2 >/dev/null
 
       - name: Set Up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.0.0
@@ -238,13 +243,14 @@ jobs:
           args=(
             ansible-playbook
             -i inventory.ini
-            ansible/playbooks/deploy_accounts_compose.yml
-            -l "${{ needs.prep.outputs.target_host }}"
+            -e "accounts_service_hosts=${{ needs.prep.outputs.target_host }}"
           )
 
           if [[ "${{ needs.prep.outputs.run_apply }}" != "true" ]]; then
             args+=(-C)
           fi
+
+          args+=(deploy_accounts_svc_plus.yml)
 
           ANSIBLE_CONFIG="${PWD}/ansible.cfg" \
           ACCOUNTS_PULL_IMAGE="${ACCOUNTS_PULL_IMAGE:-true}" \
