@@ -46,15 +46,26 @@ payload = json.loads(os.environ["PING_JSON"])
 if payload.get("status") != "ok":
     raise SystemExit("ping status not ok")
 
-if payload.get("image") != image_ref:
-    raise SystemExit(f"expected image {image_ref!r}, got {payload.get('image')!r}")
+runtime_image = payload.get("image") or ""
+runtime_tag = payload.get("tag") or ""
+runtime_commit = payload.get("commit") or ""
+runtime_version = payload.get("version") or ""
 
-if tag and payload.get("tag") != tag:
-    raise SystemExit(f"expected tag {tag!r}, got {payload.get('tag')!r}")
+if not runtime_image:
+    raise SystemExit(
+        "runtime /api/ping response did not include IMAGE-derived image identity; "
+        "expected the deployed container to receive IMAGE=<service_image_ref>"
+    )
 
-if commit and payload.get("commit") != commit:
-    raise SystemExit(f"expected commit {commit!r}, got {payload.get('commit')!r}")
+if runtime_image != image_ref:
+    raise SystemExit(f"expected image {image_ref!r}, got {runtime_image!r}")
 
-if version and payload.get("version") != version:
-    raise SystemExit(f"expected version {version!r}, got {payload.get('version')!r}")
+if tag and runtime_tag != tag:
+    raise SystemExit(f"expected tag {tag!r}, got {runtime_tag!r}")
+
+if commit and runtime_commit != commit:
+    raise SystemExit(f"expected commit {commit!r}, got {runtime_commit!r}")
+
+if version and runtime_version != version:
+    raise SystemExit(f"expected version {version!r}, got {runtime_version!r}")
 PY
